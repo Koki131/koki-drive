@@ -1,0 +1,32 @@
+{
+  "name": "file-uploader",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --watch app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "",
+  "dependencies": {
+    "@quixo3/prisma-session-store": "^3.1.13",
+    "bcryptjs": "^3.0.2",
+    "body-parser": "^1.20.3",
+    "busboy": "^1.6.0",
+    "cors": "^2.8.5",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "express-validator": "^7.2.1",
+    "flash": "^1.1.0",
+    "multer": "^1.4.5-lts.1",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.4.1"
+  }
+}
