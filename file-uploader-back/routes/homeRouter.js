@@ -6,7 +6,7 @@ const bodyParser = require("body-parser");
 const homeRouter = Router();
 
 homeRouter.use(bodyParser.json());
-homeRouter.use(bodyParser.urlencoded({ extended: true }));
+homeRouter.use(bodyParser.urlencoded({ extended: false }));
 
 
 

@@ -32,7 +32,7 @@ const uploadFolder = async (req, res) => {
         
         
         const { filename } = info;
-
+        
         uploadDir = path.join(uploadDir, filename);
     
         fs.mkdirSync(path.dirname(uploadDir), { recursive: true });
@@ -60,7 +60,7 @@ const uploadFolder = async (req, res) => {
 
     bb.on("close", () => {
         console.log("Upload complete.");
-        res.status(200).json({ success: true });
+        res.status(200).json({ uploadDone: true });
     });
 
     req.pipe(bb);

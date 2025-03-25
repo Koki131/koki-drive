@@ -32,6 +32,7 @@ const StyledNewButton = styled.button`
   font-size: 14px;
   cursor: pointer;
   transition: background-color 0.3s;
+  z-index: 999;
 
   &:hover {
     background-color: rgba(102, 51, 153, 0.9);
@@ -39,7 +40,7 @@ const StyledNewButton = styled.button`
 
 `
 
-export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, folderId }) {
+export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, folderId, status, setStatus}) {
 
 
     const handleNew = (e) => {
@@ -48,9 +49,10 @@ export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, 
     };
 
     return (
-        <StyledNewButtonContainer>
+        <StyledNewButtonContainer >
             {
-                !fileOptions ? <StyledNewButton onClick={handleNew}>New</StyledNewButton> : <UploadOptions onClick={(e) => e.stopPropagation()} files={files} setFiles={setFiles} folderId={folderId}/>
+                !fileOptions ? <StyledNewButton onClick={handleNew}>New</StyledNewButton> :
+                 <UploadOptions files={files} setFiles={setFiles} folderId={folderId} status={status} setStatus={setStatus}/>
             }
             <div className="shadow"></div>
         </StyledNewButtonContainer>
@@ -64,11 +66,14 @@ const StyledUploadOptionsContainer = styled.div`
     flex-direction: column;
     position: absolute;
     background-color: white;
+    left: 10%;
+    z-index: 999;
 `
 
-function UploadOptions({ files, setFiles, folderId }) {
+function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
 
     const handleNewFolder = () => {};
+    
     const uploadFile = (e) => {
 
         console.log(e.target)
@@ -79,6 +84,8 @@ function UploadOptions({ files, setFiles, folderId }) {
         const batch = [];
         const paths = {};
         let size = 0;
+
+        setStatus({action: "upload", data: {currentCount: 0, totalCount: form[0].files.length}});
 
         for (let file of form[0].files) {
 
@@ -108,6 +115,7 @@ function UploadOptions({ files, setFiles, folderId }) {
                 batch.push([file, relativePath]);
 
                 if (size >= 1000 * 1024 * 1024) {
+                    let len = batch.length;
                     while (batch.length > 0) {
                         let popped = batch.pop();
                         formData.append("relative_path", popped[1]);
@@ -121,6 +129,8 @@ function UploadOptions({ files, setFiles, folderId }) {
                         body: formData
                     });
 
+                    setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + len, totalCount: form[0].files.length}}));
+
                 }
             } else {
                 formData.append("relative_path", relativePath);
@@ -131,6 +141,7 @@ function UploadOptions({ files, setFiles, folderId }) {
                     credentials: "include",
                     body: formData
                 });
+                setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + 1, totalCount: form[0].files.length}}));
             }
 
             file = null;
@@ -138,9 +149,11 @@ function UploadOptions({ files, setFiles, folderId }) {
 
         if (batch.length > 0) {
             const formData = new FormData();
-
+            let len = batch.length;
+            let size = 0;
             while (batch.length > 0) {
                 let popped = batch.pop();
+                size += popped[0].size;
                 formData.append("relative_path", popped[1]);
                 formData.append("folder_upload", popped[0]);
             }
@@ -149,6 +162,8 @@ function UploadOptions({ files, setFiles, folderId }) {
                 credentials: "include",
                 body: formData
             });
+            
+            setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + len, totalCount: form[0].files.length}}));
         }
 
         for (const path of Object.keys(paths)) {
@@ -165,11 +180,11 @@ function UploadOptions({ files, setFiles, folderId }) {
             });
 
         }
-
+        setStatus({action: "", data: {currentCount: 0, totalCount: 0}});
     };
 
     return (
-        <StyledUploadOptionsContainer>
+        <StyledUploadOptionsContainer  onClick={(e) => e.stopPropagation()}>
             <button onClick={handleNewFolder}>New Folder</button>
             <form onSubmit={(e) => uploadFile(e)} encType="multipart/form-data">
                 <input type="file"/>

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
 import Sidebar from './Sidebar';
 import fileImage from './assets/images/file.svg';
 import folderImage from './assets/images/folder.svg';
 import zipImage from './assets/images/folder-zip.svg';
+import menuUp from './assets/images/menu-up.svg';
+import menuDown from './assets/images/menu-down.svg';
 
 const ContentContainer = styled.div`
   display: flex;
@@ -34,7 +36,6 @@ const FolderContainer = styled.div`
 const FileContainer = styled.div`
   height: 100px;
   padding: 10px;
-  /* border: 1px solid orange; */
 `
 const FileTempContainer = styled.div`
   display: flex;
@@ -42,11 +43,9 @@ const FileTempContainer = styled.div`
   align-items: center;
   justify-content: center;
   height: 100px;
-  /* border: 1px solid pink; */
 `
 const FileImage = styled.img`
   width: 50px;
-  /* border: 1px solid red; */
 `
 const FileName = styled.p`
   display: flex;
@@ -62,8 +61,100 @@ const FileName = styled.p`
   height: 100%;
   overflow: hidden;
   padding: 5px;
-  /* border: 1px solid red; */
 `
+const Progress = styled.div`
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  margin: 10px;
+  width: 25%;
+  background-color: #2b2b2b;
+  display: flex;
+  flex-direction: column;
+  color: white;
+`
+const ProgressHeader = styled.div`
+  border: 1px solid rgba(0,0,0,0.2);
+  width: 100%;
+  height: 30px;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75vw;
+`
+
+const ProgressBar = styled.div`
+  border: 1px solid rgba(0,0,0,0.2);
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+`
+const spin = keyframes`
+  to {
+    transform: rotate(360deg);
+  }
+
+`
+
+const Loader = styled.div`
+  color: black;
+  margin-right: 5px;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #5b5b5b;
+  border-top: 1px solid #a0ea1a;
+  border-right: 1px solid #a0ea1a;
+  border-radius: 50%;
+  animation: ${spin} 1s linear infinite;
+`
+const Minimize = styled.p`
+  color: black;
+  margin-right: 10px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    cursor: pointer;
+  }
+`
+const StyledMenuArrow = styled.img`
+`
+
+const RightContainer = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+`
+const ContentSize = styled.div`
+  margin-left: 5px;
+`
+
+const StyledBar = styled.div`
+  width: 80%;
+  height: 10%;
+  background-color: grey;
+  position: relative;
+  margin-left: 2%;
+
+  .styled-bar-fill {
+    position: absolute;
+    background-color: #7F00FF;
+    height: 100%;
+    transition: 0.1s ease;
+  }
+`
+const StyledFileCount = styled.div`
+  font-size: 0.7vw;
+  margin-right: 2%;
+`
+
 let grid = {};
 let width = 100;
 let height = 100;
@@ -82,6 +173,8 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [selectionBox, setSelectionBox] = useState(null);
   const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
   const [containerRect, setContainerRect] = useState(null);
+  const [minimize, setMinimize] = useState(false);
+  const [status, setStatus] = useState({action: "upload", data: {currentCount: 0, totalCount: 0}});
 
 
   useEffect(() => {
@@ -290,9 +383,13 @@ export default function Content({ fileOptions, setFileOptions }) {
     );
   }
 
+  const handleMinimize = (e) => {
+    setMinimize(!minimize);
+  }
+  console.log(status.data.currentCount)
   return (
     <ContentContainer>
-      <Sidebar fileOptions={fileOptions} setFileOptions={setFileOptions} files={files} setFiles={setFiles} folderId={folderId} />
+      <Sidebar fileOptions={fileOptions} setFileOptions={setFileOptions} files={files} setFiles={setFiles} folderId={folderId} status={status} setStatus={setStatus} />
       <Files ref={fileContainerRef} onClick={(e) => handleSelected(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
           <p>Loading files...</p>
@@ -324,6 +421,23 @@ export default function Content({ fileOptions, setFileOptions }) {
         <SelectionBox selectionBox={selectionBox}/>
       
       </Files>
+      {status.action !== "" && <Progress>
+        <ProgressHeader>
+          <ContentSize>{status.action === "download" ? "Downloading" : "Uploading"}</ContentSize>
+          <RightContainer>
+            <Loader></Loader>
+            <Minimize onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
+          </RightContainer>
+        </ProgressHeader>
+        {!minimize && <ProgressBar>
+          {status.action !== "download" && <StyledBar>
+            <div className='styled-bar-fill' style={{width: `${(status.data.currentCount * 100) / status.data.totalCount}%`}}></div>
+          </StyledBar>}
+          <StyledFileCount>
+            {status.action === "download" ? "Zipping file" : `${status.data.currentCount} of ${status.data.totalCount} files`}
+          </StyledFileCount>
+        </ProgressBar>}
+      </Progress>}
     </ContentContainer>
   );
 }

@@ -44,6 +44,7 @@ const StyledInput = styled.input`
     padding: 5px 10px;
     border: none;
     width: 25%;
+    z-index: 999;
 `
 const StyledSearchButton = styled.button`
     background-color: rgba(102, 51, 153, 0.6);
@@ -54,7 +55,7 @@ const StyledSearchButton = styled.button`
     font-size: 14px;
     cursor: pointer;
     transition: background-color 0.3s;
-
+    z-index: 999;
     &:hover {
         background-color: rgba(102, 51, 153, 0.9);
     }
@@ -65,7 +66,7 @@ const StyledClear = styled.button`
     background-color: white;
     border: none;
     outline: none;
-
+    z-index: 999;
     &:hover {
         cursor: pointer;
         color: teal;
@@ -81,10 +82,11 @@ const StyledLogoutButton = styled(CommonStyledDiv)`
     cursor: pointer;
     margin-right: 10px;
     transition: background-color 0.3s;
-
+    z-index: 999;
+    
     &:hover {
-    background-color: rgba(102, 51, 153, 0.9);
-}
+        background-color: rgba(102, 51, 153, 0.9);
+    }
 `;
 
 export default function Header() {
