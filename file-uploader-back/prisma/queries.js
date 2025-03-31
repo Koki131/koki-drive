@@ -63,13 +63,11 @@ const queryFilesByParent = async (userId, parent) => {
 
 };
 
-const saveFile = async (file, user) => {
-
+const saveFolderStructure = async (filePath, user) => {
     
     let parentId = null;
     
-    const folders = Object.keys(file)[0].split("/");
-
+    const folders = filePath.split("/");
     
     for (const segment of folders) {
 
@@ -97,21 +95,27 @@ const saveFile = async (file, user) => {
 
         parentId = folder.id;
     }
+    return parentId;
+};
 
-    for (const filename of Object.values(file)[0]) {
+const saveFile = async (obj, user) => {
+
+    // console.log(obj);
+    
+    for (const file of obj) {
+        
+        const parentId = file.parentId;
+        const fileName = file.fileName;
 
         await prisma.file.create({
             data: {
-                name: filename,
+                name: fileName,
                 type: "FILE",
                 user: {connect:{id: user.id}},
                 parent: parentId ? {connect: {id: parentId}} : {},
             }
         });
     }
-
-
-
 
 };
 
@@ -124,5 +128,6 @@ module.exports = {
     registerUser,
     getFiles,
     saveFile,
-    queryFilesByParent
+    queryFilesByParent,
+    saveFolderStructure
 }

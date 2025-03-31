@@ -1,68 +1,94 @@
 const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
-const { findUserById, findUserByUsername, registerUser, saveFile, queryFilesByParent } = require("../prisma/queries");
+const { findUserById, findUserByUsername, registerUser, saveFile, queryFilesByParent, saveFolderStructure } = require("../prisma/queries");
 const path = require('path');
 const { randomFillSync } = require('crypto');
 const os = require("os");
 const fs = require("fs");
 const busboy = require("busboy");
+const { pipeline } = require("stream");
 
 
-
-let uploadDir = "/home/koki/Downloads/Uploads/";
 
 const savePath = async (req, res) => {
-    await saveFile(req.body, res.locals.currentUser);
-    res.status(200).json({ success: true });
+
+    // console.log(req.body);
+    
+    const parentId = await saveFolderStructure(req.body.relativePath, res.locals.currentUser);
+
+            
+    res.status(200).json({ parentId: parentId });
 };
 
-const uploadFolder = async (req, res) => {
-    const bb = busboy({
-        headers: req.headers
-    });
-    
+const saveFiles = async (req, res) => {
 
+  await saveFile(req.body, res.locals.currentUser);
+  res.status(200).json({ success: true });
+};
+
+
+const uploadFolder = async (req, res) => {
+
+    let bb = busboy({ headers: req.headers, limits: {files: 100}});
+    
+    
+    let baseUploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/`;
+  
     bb.on("field", (name, value) => {
-        if (name === "relative_path") {
-            uploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/` + value;  
-        }
+      if (name === "relative_path") {
+        baseUploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/` + value;
+      }
     });
     
     bb.on("file", (fieldname, file, info) => {
+      const { filename } = info;
+
+      const fileUploadPath = path.join(baseUploadDir, filename);
+      
+      fs.mkdirSync(path.dirname(fileUploadPath), { recursive: true });
+  
+      const writeStream = fs.createWriteStream(fileUploadPath);
+      file.pipe(writeStream);
+
+
+      
+      // file.on("data", (chunk) => {
+        //   console.log("Started processing file " + fileUploadPath);
         
+        // });
         
-        const { filename } = info;
-        
-        uploadDir = path.join(uploadDir, filename);
-    
-        fs.mkdirSync(path.dirname(uploadDir), { recursive: true });
+      file.on("end", () => {
+        console.log("Finished file " + fileUploadPath);
+      });
 
-        const writeStream = fs.createWriteStream(uploadDir);
-        file.pipe(writeStream);
+      writeStream.on("finish", () => {
+        console.log(`Finished writing ${filename}`);
+      });
+      
+      writeStream.on("error", (err) => {
+        console.error("Write stream error:", err);
+        file.resume();
+      });
 
-        file.on("error", (err) => {
-            console.error("File stream error:", err);
-            file.resume();
-        });
-
-        file.on("end", () => {
-            console.log(`Finished processing file: ${filename}`);
-        });
-
-        writeStream.on("error", (err) => {
-            console.error("Write stream error:", err);
-        });
-
-        writeStream.on("finish", async () => {
-            console.log("Saved file:", filename);
-        });
+      file.on("error", (err) => {
+        console.error("File stream error:", err);
+        file.resume();
+      });
+      
     });
 
-    bb.on("close", () => {
-        console.log("Upload complete.");
-        res.status(200).json({ uploadDone: true });
+    bb.on("finish", () => {
+      console.log("Upload Complete");
+      res.status(200).json({ success: true });
     });
+  
+    bb.on("error", (err) => {
+      res.status(500).json({ error: "Upload failed" });
+      console.error("Busboy error:", err);
+    });
+  
 
+  
     req.pipe(bb);
 };
 // const uploadFile = [upload.single('file_upload'), async (req, res) => {
@@ -153,5 +179,6 @@ module.exports = {
     uploadFolder,
     savePath,
     isAuth,
-    getFilesByParent
+    getFilesByParent,
+    saveFiles
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { isEqual } from 'lodash';
 import styled, { keyframes } from 'styled-components';
 import Sidebar from './Sidebar';
 import fileImage from './assets/images/file.svg';
@@ -174,7 +175,8 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
   const [containerRect, setContainerRect] = useState(null);
   const [minimize, setMinimize] = useState(false);
-  const [status, setStatus] = useState({action: "upload", data: {currentCount: 0, totalCount: 0}});
+  const [status, setStatus] = useState({action: "", data: {currentCount: 0, totalCount: 0}});
+  const [updateFiles, setUpdateFiles] = useState(false);
 
 
   useEffect(() => {
@@ -215,16 +217,19 @@ export default function Content({ fileOptions, setFileOptions }) {
   useEffect(() => {
 
     const getFiles = async () => {
-        setLoading(true);
         try {
           const parent = folderId ? folderId : "";
           const request = await fetch("http://localhost:3000/getFilesByParent?parent=" + parent, {
               method: "GET",
-              headers: { "Content-Type" : "application/json"},
+              headers: { "Content-Type" : "text/plain"},
               credentials: 'include'
           });
           const response = await request.json();
-          setFiles(response.files);
+          if (!isEqual(response.files, files)) {
+            setLoading(true);
+            setFiles(response.files);
+          } 
+          
         } catch (e) {
           console.error(e);
           
@@ -235,7 +240,7 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     getFiles();
     
-  }, [folderId]);
+  }, [folderId, updateFiles]);
 
 
   const handleClick = (file) => {
@@ -276,8 +281,12 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   const setFileSize = () => {
     const file = fileContainerRef.current.querySelector('[data-file-id]');
+    
+    if (!file) return;
+
     const rect = file.getBoundingClientRect();
     
+
     width = Math.round(rect.width);
     height = Math.round(rect.height);
 
@@ -386,10 +395,14 @@ export default function Content({ fileOptions, setFileOptions }) {
   const handleMinimize = (e) => {
     setMinimize(!minimize);
   }
-  console.log(status.data.currentCount)
+
   return (
     <ContentContainer>
-      <Sidebar fileOptions={fileOptions} setFileOptions={setFileOptions} files={files} setFiles={setFiles} folderId={folderId} status={status} setStatus={setStatus} />
+      <Sidebar 
+        fileOptions={fileOptions} setFileOptions={setFileOptions} files={files} setFiles={setFiles} 
+        folderId={folderId} updateFiles={updateFiles} 
+        setUpdateFiles={setUpdateFiles} status={status} setStatus={setStatus} 
+      />
       <Files ref={fileContainerRef} onClick={(e) => handleSelected(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
           <p>Loading files...</p>
@@ -429,12 +442,12 @@ export default function Content({ fileOptions, setFileOptions }) {
             <Minimize onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
           </RightContainer>
         </ProgressHeader>
-        {!minimize && <ProgressBar>
-          {status.action !== "download" && <StyledBar>
+        {!minimize && <ProgressBar style={{justifyContent: status.action === "final" ? "center" : "space-between"}}>
+          {(status.action !== "download" && status.action !== "final") && <StyledBar>
             <div className='styled-bar-fill' style={{width: `${(status.data.currentCount * 100) / status.data.totalCount}%`}}></div>
           </StyledBar>}
           <StyledFileCount>
-            {status.action === "download" ? "Zipping file" : `${status.data.currentCount} of ${status.data.totalCount} files`}
+            {status.action === "download" ? "Zipping file" : status.action === "upload" ? `${status.data.currentCount} of ${status.data.totalCount} files` : "Finalizing"}
           </StyledFileCount>
         </ProgressBar>}
       </Progress>}

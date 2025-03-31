@@ -1,6 +1,5 @@
 import styled from "styled-components";
 
-
 const StyledNewButtonContainer = styled.div`
   width: 5vw;
   display: flex;
@@ -39,8 +38,8 @@ const StyledNewButton = styled.button`
   }
 
 `
-
-export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, folderId, status, setStatus}) {
+const apiUrl = import.meta.env.VITE_API_URL;
+export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, folderId, updateFiles, setUpdateFiles, status, setStatus}) {
 
 
     const handleNew = (e) => {
@@ -52,7 +51,10 @@ export default function Sidebar({ fileOptions, setFileOptions, files, setFiles, 
         <StyledNewButtonContainer >
             {
                 !fileOptions ? <StyledNewButton onClick={handleNew}>New</StyledNewButton> :
-                 <UploadOptions files={files} setFiles={setFiles} folderId={folderId} status={status} setStatus={setStatus}/>
+                 <UploadOptions 
+                    files={files} setFiles={setFiles} folderId={folderId} 
+                    updateFiles={updateFiles} setUpdateFiles={setUpdateFiles} status={status} setStatus={setStatus}
+                 />
             }
             <div className="shadow"></div>
         </StyledNewButtonContainer>
@@ -70,7 +72,7 @@ const StyledUploadOptionsContainer = styled.div`
     z-index: 999;
 `
 
-function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
+function UploadOptions({ files, setFiles, folderId, updateFiles, setUpdateFiles, status, setStatus }) {
 
     const handleNewFolder = () => {};
     
@@ -78,11 +80,48 @@ function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
 
         console.log(e.target)
     };
+
+    const fetchWithTimeout = async (url, options = {}, timeout = 10000) => {
+        const controller = new AbortController();
+        const signal = controller.signal;
+        options.signal = signal;
+        
+        const timer = setTimeout(() => controller.abort(), timeout);
+        
+        try {
+            const response = await fetch(url, options);
+            clearTimeout(timer); 
+            return response;
+        } catch (error) {
+            clearTimeout(timer);
+            throw error;
+        }
+    }
+    const retryFetch = async (url, options = {}, retries = 3, timeout = 10000, backoff = 500) => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                const response = await fetchWithTimeout(url, options, timeout);
+                if (!response.ok) {
+                    throw new Error(`Server responded with status ${response.status}`);
+                }
+                return response;
+            } catch (error) {
+                console.error(`Attempt ${attempt} failed: ${error.message}`);
+                if (attempt === retries) {
+                    throw error;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, backoff));
+                backoff *= 2; // Exponential increase for subsequent retries
+            }
+        }
+    }
     const uploadFolder = async (e) => {
         e.preventDefault();
         const form = e.target;
         const batch = [];
-        const paths = {};
+        let pathBatch = [];
+        let pathToId = {};
         let size = 0;
 
         setStatus({action: "upload", data: {currentCount: 0, totalCount: form[0].files.length}});
@@ -98,49 +137,85 @@ function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
                 path.push("/");
             }
 
-            
             let relativePath = path.join("");
-            if (!paths[relativePath]) {
-                paths[relativePath] = [];
-            }
-            paths[relativePath].push(pathArr[len-1]);
             
-            
-            let formData = new FormData();
+            // ******* IMPORTANT ***********
+            // if (!pathToId[relativePath]) {
+    
+            //     // send path
+            //     const req = await fetch("http://localhost:3000/savePath", {
+            //         method: "POST",
+            //         headers: {
+            //             "Content-Type": "application/json",
+            //         },
+            //         credentials: "include",
+            //         body: JSON.stringify({ relativePath: relativePath }),
+            //     });
+            //     const res = await req.json();
 
+            //     pathToId[relativePath] = res.parentId;
+
+            // }
+            
+            
             if (file.size <= (100 * 1024 * 1024)) {
+                let formData = new FormData();
                 
                 size += file.size;
 
                 batch.push([file, relativePath]);
+                // pathBatch.push({parentId: pathToId[relativePath], fileName: pathArr[len-1]});
 
-                if (size >= 1000 * 1024 * 1024) {
+                if (size >= 100 * 1024 * 1024 || batch.length >= 100) {
                     let len = batch.length;
                     while (batch.length > 0) {
                         let popped = batch.pop();
                         formData.append("relative_path", popped[1]);
-                        formData.append("folder_upload", popped[0]);
+                        formData.append("file", popped[0]);
                     }
                     
                     size = 0;
-                    await fetch("http://localhost:3000/uploadFolder", {
+                    
+                    // await fetch("http://localhost:3000/saveFiles", {
+                    //     method: "POST",
+                    //     headers: {
+                    //         "Content-Type" : "application/json"
+                    //     },
+                    //     credentials: "include",
+                    //     body: JSON.stringify(pathBatch)
+                    // });
+                    // pathBatch = [];
+                    
+                    
+                    await retryFetch(`${apiUrl}/uploadFolder`, {
                         method: "POST",
                         credentials: "include",
                         body: formData
-                    });
+                    }, 3, 10000, 500);
 
                     setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + len, totalCount: form[0].files.length}}));
 
                 }
             } else {
+                let formData = new FormData();
                 formData.append("relative_path", relativePath);
-                formData.append("folder_upload", file);
+                formData.append("file", file);
+
+                // await fetch("http://localhost:3000/saveFiles", {
+                //     method: "POST",
+                //     headers: {
+                //         "Content-Type" : "application/json"
+                //     },
+                //     credentials: "include",
+                //     body: JSON.stringify([{parentId: pathToId[relativePath], fileName: pathArr[len-1]}])
+                // });
         
-                await fetch("http://localhost:3000/uploadFolder", {
+                const req = await fetch(`${apiUrl}/uploadFolder`, {
                     method: "POST",
                     credentials: "include",
                     body: formData
                 });
+                
                 setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + 1, totalCount: form[0].files.length}}));
             }
 
@@ -150,35 +225,30 @@ function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
         if (batch.length > 0) {
             const formData = new FormData();
             let len = batch.length;
-            let size = 0;
             while (batch.length > 0) {
                 let popped = batch.pop();
-                size += popped[0].size;
+
                 formData.append("relative_path", popped[1]);
-                formData.append("folder_upload", popped[0]);
+                formData.append("file", popped[0]);
             }
-            await fetch("http://localhost:3000/uploadFolder", {
+
+            // await fetch("http://localhost:3000/saveFiles", {
+            //     method: "POST",
+            //     headers: {
+            //         "Content-Type" : "application/json"
+            //     },
+            //     credentials: "include",
+            //     body: JSON.stringify(pathBatch)
+            // });
+            // pathBatch = [];
+
+            await retryFetch(`${apiUrl}/uploadFolder`, {
                 method: "POST",
                 credentials: "include",
                 body: formData
-            });
+            }, 3, 10000, 500);
             
             setStatus(prevStatus => ({action: "upload", data: {currentCount: prevStatus.data.currentCount + len, totalCount: form[0].files.length}}));
-        }
-
-        for (const path of Object.keys(paths)) {
-            const obj = {};
-            obj[path] = paths[path];
-
-            await fetch("http://localhost:3000/savePath", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                credentials: "include",
-                body: JSON.stringify(obj),
-            });
-
         }
         setStatus({action: "", data: {currentCount: 0, totalCount: 0}});
     };
@@ -190,8 +260,8 @@ function UploadOptions({ files, setFiles, folderId, status, setStatus }) {
                 <input type="file"/>
                 <button type="submit">Submit</button>
             </form>
-            <form onSubmit={(e) => uploadFolder(e)}>
-                <input type="file" webkitdirectory="" multiple encType="multipart/form-data" />
+            <form onSubmit={(e) => uploadFolder(e)} method="POST">
+                <input type="file" webkitdirectory="" encType="multipart/form-data" />
                 <button type="submit">Submit</button>
             </form>
         </StyledUploadOptionsContainer>

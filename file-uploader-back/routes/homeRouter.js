@@ -1,12 +1,12 @@
 const Router = require("express");
-const { register, logout, uploadFolder, savePath, isAuth, getFilesByParent } = require("../controllers/homeController");
+const { register, logout, uploadFolder, savePath, isAuth, getFilesByParent, saveFiles } = require("../controllers/homeController");
 const passport = require("passport");
 const bodyParser = require("body-parser");
 
 const homeRouter = Router();
 
-homeRouter.use(bodyParser.json());
-homeRouter.use(bodyParser.urlencoded({ extended: false }));
+homeRouter.use(bodyParser.json({ limit: '200mb' }));
+homeRouter.use(bodyParser.urlencoded({ extended: true, limit: '200mb' }));
 
 
 
@@ -20,6 +20,7 @@ homeRouter.post(
 homeRouter.post("/register", register);
 homeRouter.post("/logout", logout);
 homeRouter.post("/savePath", savePath);
+homeRouter.post("/saveFiles", saveFiles);
 homeRouter.post("/uploadFolder", uploadFolder);
 homeRouter.get("/getFilesByParent", getFilesByParent)
 homeRouter.get("/isUserAuthenticated", isAuth);
