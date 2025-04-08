@@ -27,9 +27,9 @@ const saveFiles = async (req, res) => {
 };
 
 
-const uploadFolder = async (req, res) => {
+const uploadFile = async (req, res) => {
 
-    let bb = busboy({ headers: req.headers, limits: {files: 100}});
+    let bb = busboy({ headers: req.headers });
     
     
     let baseUploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/`;
@@ -91,6 +91,85 @@ const uploadFolder = async (req, res) => {
   
     req.pipe(bb);
 };
+
+const META_DIR = path.join(__dirname, 'uploadMeta');
+
+fs.mkdirSync(META_DIR, { recursive: true });
+
+const uploadChunk = (req, res) => {
+
+  const bb = busboy({ headers: req.headers });
+  let fileName, chunkIndex, totalChunks, relativePath;
+
+  bb.on('field', (name, value) => {
+    if (name === 'relative_path') relativePath = value;
+    if (name === 'filename') fileName = value;
+    if (name === 'chunk_index') chunkIndex = parseInt(value, 10);
+    if (name === 'total_chunks') totalChunks = parseInt(value, 10);
+  });
+
+  bb.on('file', (fieldname, file, info) => {
+
+    const finalPath = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/${relativePath}`;
+    fs.mkdirSync(finalPath, { recursive: true });
+    const finalFilePath = path.join(finalPath, fileName);
+    const writeStream = fs.createWriteStream(finalFilePath, { flags: 'a' });
+    file.pipe(writeStream);
+
+    writeStream.on('finish', () => {
+      console.log(`Chunk ${chunkIndex} for ${fileName} saved.`);
+      
+      // Update metadata after saving each chunk
+
+      updateUploadMeta(fileName, chunkIndex, totalChunks)
+        .then(() => res.status(200).json({ success: true }))
+        .catch(err => {
+          console.error('Error updating metadata:', err);
+          res.status(500).json({ error: 'Metadata update failed' });
+        });
+    });
+
+    writeStream.on('error', (err) => {
+      console.error('Error writing chunk:', err);
+      res.status(500).json({ error: 'Chunk write error' });
+    });
+  });
+
+  bb.on('error', (err) => {
+    console.error('Busboy error:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  });
+
+  req.pipe(bb);
+
+};
+const updateUploadMeta = (fileName, chunkIndex, totalChunks) => {
+  return new Promise((resolve, reject) => {
+    const metaPath = path.join(META_DIR, `${fileName}.json`);
+    let meta = { fileName, totalChunks, receivedChunks: [] };
+
+    // Read existing metadata if available
+    if (fs.existsSync(metaPath)) {
+      try {
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      } catch (err) {
+        console.error('Error parsing metadata:', err);
+      }
+    }
+    
+    // Add chunk index if not already recorded
+    if (!meta.receivedChunks.includes(chunkIndex)) {
+      meta.totalChunks = totalChunks;
+      meta.receivedChunks.push(chunkIndex);
+    }
+    
+    fs.writeFile(metaPath, JSON.stringify(meta), (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
 // const uploadFile = [upload.single('file_upload'), async (req, res) => {
 
 // }];
@@ -176,7 +255,8 @@ const logout = (req, res) => {
 module.exports = {
     register,
     logout,
-    uploadFolder,
+    uploadFile,
+    uploadChunk,
     savePath,
     isAuth,
     getFilesByParent,

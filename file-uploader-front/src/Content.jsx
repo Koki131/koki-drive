@@ -8,6 +8,10 @@ import folderImage from './assets/images/folder.svg';
 import zipImage from './assets/images/folder-zip.svg';
 import menuUp from './assets/images/menu-up.svg';
 import menuDown from './assets/images/menu-down.svg';
+import close from './assets/images/close.svg';
+import pause from './assets/images/pause.svg';
+import play from './assets/images/play.svg';
+
 
 const ContentContainer = styled.div`
   display: flex;
@@ -63,19 +67,30 @@ const FileName = styled.p`
   overflow: hidden;
   padding: 5px;
 `
-const Progress = styled.div`
+const ProgressContainer = styled.div`
   position: absolute;
   bottom: 0;
   right: 0;
-  margin: 10px;
-  width: 25%;
+  width: 20%;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  max-height: calc(100vh - 5vw);
+  overflow-y: auto;
+`
+const MinimizeContainer = styled.div`
   background-color: #2b2b2b;
+  width: 100%;
+`
+const Progress = styled.div`
+  width: 100%;
+  background-color: #252424;
   display: flex;
   flex-direction: column;
   color: white;
 `
 const ProgressHeader = styled.div`
-  border: 1px solid rgba(0,0,0,0.2);
+  border-top: 1px solid rgba(254, 254, 254, 0.2);
   width: 100%;
   height: 30px;
   display: flex;
@@ -86,14 +101,21 @@ const ProgressHeader = styled.div`
 `
 
 const ProgressBar = styled.div`
-  border: 1px solid rgba(0,0,0,0.2);
+  border-bottom: 1px solid rgba(0,0,0,0.2);
   width: 100%;
   height: 80px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   flex-direction: row;
+  gap: 1vw;
 `
+const RightContainer = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+`
+
 const spin = keyframes`
   to {
     transform: rotate(360deg);
@@ -112,6 +134,19 @@ const Loader = styled.div`
   border-radius: 50%;
   animation: ${spin} 1s linear infinite;
 `
+const Pause = styled.img`
+  width: 15px;
+  height: 15px;
+  margin-right: 5px;
+  cursor: pointer;
+`
+const Close = styled.img`
+  width: 15px;
+  height: 15px;
+  margin-right: 5px;
+  cursor: pointer;
+`
+
 const Minimize = styled.p`
   color: black;
   margin-right: 10px;
@@ -128,11 +163,6 @@ const Minimize = styled.p`
 const StyledMenuArrow = styled.img`
 `
 
-const RightContainer = styled.div`
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-`
 const ContentSize = styled.div`
   margin-left: 5px;
 `
@@ -150,6 +180,10 @@ const StyledBar = styled.div`
     height: 100%;
     transition: 0.1s ease;
   }
+  .styled-upload-header {
+    position: absolute;
+    top: 0;
+  }
 `
 const StyledFileCount = styled.div`
   font-size: 0.7vw;
@@ -160,6 +194,7 @@ let grid = {};
 let width = 100;
 let height = 100;
 let fileCoords = {};
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export default function Content({ fileOptions, setFileOptions }) {
 
@@ -175,9 +210,13 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
   const [containerRect, setContainerRect] = useState(null);
   const [minimize, setMinimize] = useState(false);
-  const [status, setStatus] = useState({action: "", data: {currentCount: 0, totalCount: 0}});
   const [updateFiles, setUpdateFiles] = useState(false);
+  const [jobs, setJobs] = useState({});
+  const jobsRef = useRef(jobs);
 
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   useEffect(() => {
     const handleMouseUp = (e) => {
@@ -379,7 +418,7 @@ export default function Content({ fileOptions, setFileOptions }) {
     setSelectedFiles(tempFiles);
     
     
-  }
+  };
   
   const rectanglesIntersect = (rectA, rectB) => {
     // console.log(rectA, rectB);
@@ -390,18 +429,468 @@ export default function Content({ fileOptions, setFileOptions }) {
       rectA.y < rectB.y + rectB.height &&          
       rectA.y + rectA.height > rectB.y            
     );
-  }
+  };
 
   const handleMinimize = (e) => {
     setMinimize(!minimize);
-  }
+  };
+
+  const handleNewFolder = () => {};
+    
+  const uploadFile = (e) => {
+
+      console.log(e.target)
+  };
+
+
+  let rollingSpeed = 1;
+
+  const updateRollingSpeed = (chunkSizeBytes, durationMs, cameFrom) => {
+    const minDurationMs = 100;
+    const effectiveDurationMs = Math.max(durationMs, minDurationMs);
+    const currentSpeed = (chunkSizeBytes / (effectiveDurationMs / 1000)) / (1024 * 1024); // MBs
+    const smoothingFactor = 0.7;
+    
+    if (rollingSpeed) {
+      rollingSpeed = smoothingFactor * rollingSpeed + (1 - smoothingFactor) * currentSpeed;
+    } else {
+      rollingSpeed = currentSpeed;
+    }
+    // console.log(cameFrom);    
+    // console.log("Rolling speed:", rollingSpeed, "Current speed: ", currentSpeed, "Chunk size: ", chunkSizeBytes, "Duration: ", effectiveDurationMs);
+    
+    return Math.max(rollingSpeed, 1);
+  };
+
+  const determineDynamicChunkSize = (currentSpeedMbps) => {
+    if (currentSpeedMbps <= 2) {
+      return 1 * 1024 * 1024;
+    } else if (currentSpeedMbps <= 5) {
+      return 2 * 1024 * 1024; 
+    } else if (currentSpeedMbps <= 10) {
+      return 5 * 1024 * 1024; 
+    } else if (currentSpeedMbps <= 20) {
+      return 10 * 1024 * 1024;
+    } else {
+      return 20 * 1024 * 1024;
+    }
+  };
+
+
+  const fetchWithTimeout = async (url, options = {}, timeout, jobId) => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      options.signal = signal;
+      
+      const timer = setTimeout(() => controller.abort(), timeout);
+
+      const monitorInterval = setInterval(() => {
+        const job = jobsRef.current[jobId];
+        if (job) {
+
+          if (job.pause || job.close) {
+            controller.abort();
+          }
+        }
+      }, 100);
+      
+      try {
+          const response = await fetch(url, options);
+
+          clearTimeout(timer); 
+          clearInterval(monitorInterval);
+          return response;
+      } catch (error) {
+          clearTimeout(timer);
+          clearInterval(monitorInterval);
+          throw error;
+      }
+  };
+
+  const retryFetch = async (url, options = {}, timeout = 15000, backoff = 500, jobId, waitForResume) => {
+
+    let currentBackoff = backoff;
+    let currentTimeout = timeout;
+
+    while (true) {
+
+      try {
+
+
+        const response = await fetchWithTimeout(url, options, currentTimeout, jobId);
+                  
+        if (!response.ok) {
+          throw new Error(`Server responded with status ${response.status}`);
+        }
+
+        
+        return response;
+
+      } catch (error) {
+          console.error(`Fetch failed: ${error.message}`);
+          
+          const res = await waitForResume();
+      
+          if (res === 'closed') {
+            deleteJob(jobId);
+            throw new Error("Upload cancelled by user");
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, currentBackoff));
+          currentBackoff *= 2;
+          currentTimeout *= 1.2;
+      }
+    }
+  };
+  
+
+  const waitForResume = async (jobId) => {
+
+    let currJob = jobsRef.current[jobId];
+
+    if (!currJob) return;
+
+    return new Promise((resolve) => {
+      const checkStatus = () => {
+        currJob = jobsRef.current[jobId];
+        
+        if (currJob.close) {
+          resolve('closed');
+        } else if (!currJob.pause) {
+          resolve('resumed');
+        } else {
+          setTimeout(checkStatus, 100);
+        }
+      };
+      checkStatus();
+    });
+  };
+
+  const getUploadSize = (payload) => {
+    let totalSize = 0;
+    for (let file of payload) {
+      totalSize += file.size;
+    }
+    return totalSize;
+  };
+
+  const getParentName = (tempName) => {
+    let parentName = "";
+
+    for (let i = 0; i < tempName.length && i < 10; i++) {
+        parentName += tempName.charAt(i);
+    }
+
+    return parentName;
+  };
+
+  const uploadFolder = async (e) => {
+      e.preventDefault();
+      
+      const form = e.target;
+
+      if (form[0].files.length <= 0) return;
+
+      const batch = [];
+      let pathBatch = [];
+      let pathToId = {};
+      let currSize = [0];
+      let batchSize = 0;
+
+      setFileOptions((prev) => !prev);
+
+      const jobId = Date.now();
+
+      const tempName = form[0].files[0].webkitRelativePath.split("/")[0];
+
+      const parentName = getParentName(tempName);
+
+      const totalSize = getUploadSize(form[0].files);
+      
+      addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
+
+
+
+      let currJob = jobsRef.current[jobId];
+
+      for (let file of form[0].files) {
+
+          currJob = jobsRef.current[jobId];
+
+          const pathArr = file.webkitRelativePath.split("/");
+          const len = pathArr.length;
+          let path = [];
+          for (let i = 0; i < len-1; i++) {
+              const p = pathArr[i];
+              path.push(p);
+              path.push("/");
+          }
+
+          let relativePath = path.join("");
+          
+          // ******* IMPORTANT ***********
+          // if (!pathToId[relativePath]) {
+  
+          //     // send path
+          //     const req = await fetch("http://localhost:3000/savePath", {
+          //         method: "POST",
+          //         headers: {
+          //             "Content-Type": "application/json",
+          //         },
+          //         credentials: "include",
+          //         body: JSON.stringify({ relativePath: relativePath }),
+          //     });
+          //     const res = await req.json();
+
+          //     pathToId[relativePath] = res.parentId;
+
+          // }
+          
+          let currChunkSize = 1 * 1024 * 1024;
+
+          if (file.size <= currChunkSize) {
+
+              let formData = new FormData();
+              
+              batchSize += file.size;
+              currSize[0] += file.size;
+
+              batch.push([file, relativePath]);
+              // pathBatch.push({parentId: pathToId[relativePath], fileName: pathArr[len-1]});
+
+              if (batchSize >= currChunkSize || batch.length >= 100) {
+
+                  while (batch.length > 0) {
+                      let popped = batch.pop();
+                      formData.append("relative_path", popped[1]);
+                      formData.append("file", popped[0]);
+                  }
+                  
+                  
+                  const start = performance.now();
+                  
+                  await retryFetch(`${apiUrl}/uploadFile`, {
+                    method: "POST",
+                    credentials: "include",
+                    body: formData
+                  }, 10000, 500, jobId,
+                  () => waitForResume(jobId));
+                  
+                  const end = performance.now();
+                  const duration = end - start;
+                  
+                  const currentSpeed = updateRollingSpeed(batchSize, duration, "BATCH");
+                  currChunkSize = determineDynamicChunkSize(currentSpeed);
+
+                  batchSize = 0;
+                  // await fetch("http://localhost:3000/saveFiles", {
+                  //     method: "POST",
+                  //     headers: {
+                  //         "Content-Type" : "application/json"
+                  //     },
+                  //     credentials: "include",
+                  //     body: JSON.stringify(pathBatch)
+                  // });
+                  // pathBatch = [];
+
+                  let pause = currJob ? currJob.pause : false;
+                  let cancel = currJob ? currJob.cancel : false;
+        
+                  updateJob({
+                      jobId: jobId, action: "upload", name: parentName, 
+                      data: {percentage: Math.round(currSize * 100 / totalSize)}, pause: pause, cancel: cancel
+                  });
+              }
+          } else {
+            
+            // let formData = new FormData();
+            // formData.append("relative_path", relativePath);
+            // formData.append("file", file);
+
+            // await fetch("http://localhost:3000/saveFiles", {
+            //     method: "POST",
+            //     headers: {
+            //         "Content-Type" : "application/json"
+            //     },
+            //     credentials: "include",
+            //     body: JSON.stringify([{parentId: pathToId[relativePath], fileName: pathArr[len-1]}])
+            // });
+
+            await uploadInChunks(file, relativePath, jobId, parentName, currJob, currSize, totalSize);
+            
+
+          }
+          
+          file = null;
+      }
+
+      if (batch.length > 0) {
+          const formData = new FormData();
+          while (batch.length > 0) {
+              let popped = batch.pop();
+
+              formData.append("relative_path", popped[1]);
+              formData.append("file", popped[0]);
+          }
+
+          // await fetch("http://localhost:3000/saveFiles", {
+          //     method: "POST",
+          //     headers: {
+          //         "Content-Type" : "application/json"
+          //     },
+          //     credentials: "include",
+          //     body: JSON.stringify(pathBatch)
+          // });
+          // pathBatch = [];
+
+          await retryFetch(`${apiUrl}/uploadFile`, {
+              method: "POST",
+              credentials: "include",
+              body: formData
+          }, 10000, 500, jobId,
+          () => waitForResume(jobId));
+          
+      }
+      removeJob(jobId);
+  };
+
+
+  const uploadInChunks = async (file, relativePath, jobId, parentName, currJob, currSize, totalSize) => {
+    
+
+    // add last chunk size to last chunk index in metadata
+
+    let currChunkSize = 1 * 1024 * 1024; 
+    let prevEnd = 0;
+  
+    while (prevEnd < file.size) {
+
+      const start = prevEnd;
+      const end = Math.min(file.size, start + currChunkSize);
+      const chunk = file.slice(start, end);
+      prevEnd = end;
+  
+
+      currSize[0] += chunk.size;
+  
+      const formData = new FormData();
+      formData.append("relative_path", relativePath);
+      formData.append("filename", file.name);
+      formData.append("chunk_index", Math.floor(start / currChunkSize));
+
+      formData.append("total_chunks", Math.ceil(file.size / currChunkSize));
+      formData.append("chunk", chunk);
+  
+      const startTime = performance.now();
+      
+      const response = await retryFetch(`${apiUrl}/uploadChunk`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      }, 10000, 500, jobId, () => waitForResume(jobId));
+  
+      if (!response.ok) {
+        // Handle error (could retry or abort)
+        return;
+      }
+  
+      const endTime = performance.now();
+      const duration = endTime - startTime;
+      console.log("CURR SIZE", currChunkSize, "CHUNK",chunk.size);
+      
+      const currentSpeed = updateRollingSpeed(currChunkSize, duration, "CHUNK");
+      currChunkSize = determineDynamicChunkSize(currentSpeed);
+  
+      let pause = currJob ? currJob.pause : false;
+      let cancel = currJob ? currJob.cancel : false;
+
+      updateJob({
+        jobId: jobId,
+        action: "upload",
+        name: parentName,
+        data: { percentage: Math.round(currSize[0] * 100 / totalSize) },
+        pause: pause,
+        cancel: cancel
+      });
+    }
+  };
+
+  const addJob = (job) => {
+    setJobs(prevJobs => ({
+      ...prevJobs,
+      [job.jobId]: job
+    }));
+  };
+
+  const deleteJob = (jobId) => {
+    setJobs(prevJobs => {
+
+      const updatedJobs = { ...prevJobs };
+      delete updatedJobs[jobId];
+
+      return updatedJobs;
+    });
+  };
+  
+  const updateJob = (job) => {
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+      return {
+        ...prevJobs,
+        [job.jobId]: {
+          ...prevJobs[job.jobId],
+          data: {
+            ...prevJobs[job.jobId].data,
+            percentage: job.data.percentage,
+          }
+        }
+      };
+    });
+  };
+  
+  const removeJob = (jobId) => {
+    setJobs(prevJobs => {
+      const newJobs = { ...prevJobs };
+      delete newJobs[jobId];
+      return newJobs; 
+    });
+
+  };
+  const handlePause = (job) => {
+
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+  
+      return {
+        ...prevJobs,
+        [job.jobId]: { ...prevJobs[job.jobId], pause: !prevJobs[job.jobId].pause }
+      };
+    });
+
+
+  };
+
+  const handleClose = (job) => {
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+  
+      return {
+        ...prevJobs,
+        [job.jobId]: { ...prevJobs[job.jobId], close: true }
+      };
+    });
+  };
 
   return (
     <ContentContainer>
       <Sidebar 
-        fileOptions={fileOptions} setFileOptions={setFileOptions} files={files} setFiles={setFiles} 
-        folderId={folderId} updateFiles={updateFiles} 
-        setUpdateFiles={setUpdateFiles} status={status} setStatus={setStatus} 
+        fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
       <Files ref={fileContainerRef} onClick={(e) => handleSelected(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
@@ -434,24 +923,51 @@ export default function Content({ fileOptions, setFileOptions }) {
         <SelectionBox selectionBox={selectionBox}/>
       
       </Files>
-      {status.action !== "" && <Progress>
-        <ProgressHeader>
-          <ContentSize>{status.action === "download" ? "Downloading" : "Uploading"}</ContentSize>
-          <RightContainer>
-            <Loader></Loader>
-            <Minimize onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
-          </RightContainer>
-        </ProgressHeader>
-        {!minimize && <ProgressBar style={{justifyContent: status.action === "final" ? "center" : "space-between"}}>
-          {(status.action !== "download" && status.action !== "final") && <StyledBar>
-            <div className='styled-bar-fill' style={{width: `${(status.data.currentCount * 100) / status.data.totalCount}%`}}></div>
-          </StyledBar>}
-          <StyledFileCount>
-            {status.action === "download" ? "Zipping file" : status.action === "upload" ? `${status.data.currentCount} of ${status.data.totalCount} files` : "Finalizing"}
-          </StyledFileCount>
-        </ProgressBar>}
-      </Progress>}
+      {Object.keys(jobs).length && <ProgressComp 
+          minimize={minimize} menuUp={menuUp} menuDown={menuDown} handleMinimize={handleMinimize} jobs={jobs} handleClose={handleClose} handlePause={handlePause}
+      />
+      }
     </ContentContainer>
+  );
+}
+
+function ProgressComp({ minimize, menuUp, menuDown, handleMinimize, jobs, handleClose, handlePause }) {
+
+
+  
+  return (
+    <ProgressContainer>
+      <MinimizeContainer>
+        <Minimize onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
+      </MinimizeContainer>
+      {
+        Object.keys(jobs).map((jobId) => {
+          
+          const job = jobs[jobId];
+
+          return (
+          !minimize && <Progress key={jobId}>
+            <ProgressHeader>
+              <ContentSize>{job.action !== "download" ? "Uploading " : "Downloading "}{`(${job.name})`}</ContentSize>
+              <RightContainer>
+                <Loader></Loader>
+                <Pause onClick={() => handlePause(job)} src={job.pause ? play : pause}></Pause>
+                <Close onClick={() => handleClose(job)} src={close}></Close>
+              </RightContainer>
+            </ProgressHeader>
+            <ProgressBar>
+              {(job.action !== "download") && <StyledBar>
+                <div className='styled-bar-fill' style={{width: `${job.data.percentage}%`}}></div>
+              </StyledBar>}
+              <StyledFileCount>
+                {job.action === "download" ? "Zipping file" :`${job.data.percentage}%`}
+              </StyledFileCount>
+            </ProgressBar>
+          </Progress>
+          );
+        })
+      }
+    </ProgressContainer>
   );
 }
 
