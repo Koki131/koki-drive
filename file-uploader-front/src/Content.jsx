@@ -456,8 +456,6 @@ export default function Content({ fileOptions, setFileOptions }) {
     } else {
       rollingSpeed = currentSpeed;
     }
-    // console.log(cameFrom);    
-    // console.log("Rolling speed:", rollingSpeed, "Current speed: ", currentSpeed, "Chunk size: ", chunkSizeBytes, "Duration: ", effectiveDurationMs);
     
     return Math.max(rollingSpeed, 1);
   };
@@ -514,10 +512,18 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     while (true) {
 
+      let res = await waitForResume();
+      
+
+      if (res === 'closed') {
+        deleteJob(jobId);
+        throw new Error("Upload cancelled by user");
+      }
       try {
 
 
         const response = await fetchWithTimeout(url, options, currentTimeout, jobId);
+        
                   
         if (!response.ok) {
           throw new Error(`Server responded with status ${response.status}`);
@@ -529,13 +535,15 @@ export default function Content({ fileOptions, setFileOptions }) {
       } catch (error) {
           console.error(`Fetch failed: ${error.message}`);
           
-          const res = await waitForResume();
-      
+          res = await waitForResume();
+
           if (res === 'closed') {
+            console.log("FIRST");
+            
             deleteJob(jobId);
             throw new Error("Upload cancelled by user");
           }
-          
+
           await new Promise(resolve => setTimeout(resolve, currentBackoff));
           currentBackoff *= 2;
           currentTimeout *= 1.2;
@@ -591,11 +599,8 @@ export default function Content({ fileOptions, setFileOptions }) {
 
       if (form[0].files.length <= 0) return;
 
-      const batch = [];
-      let pathBatch = [];
       let pathToId = {};
       let currSize = [0];
-      let batchSize = 0;
 
       setFileOptions((prev) => !prev);
 
@@ -610,12 +615,8 @@ export default function Content({ fileOptions, setFileOptions }) {
       addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
 
 
-
-      let currJob = jobsRef.current[jobId];
-
       for (let file of form[0].files) {
 
-          currJob = jobsRef.current[jobId];
 
           const pathArr = file.webkitRelativePath.split("/");
           const len = pathArr.length;
@@ -629,94 +630,70 @@ export default function Content({ fileOptions, setFileOptions }) {
           let relativePath = path.join("");
           
           // ******* IMPORTANT ***********
-          // if (!pathToId[relativePath]) {
+          if (!pathToId[relativePath]) {
   
-          //     // send path
-          //     const req = await fetch("http://localhost:3000/savePath", {
-          //         method: "POST",
-          //         headers: {
-          //             "Content-Type": "application/json",
-          //         },
-          //         credentials: "include",
-          //         body: JSON.stringify({ relativePath: relativePath }),
-          //     });
-          //     const res = await req.json();
+              const req = await fetch(`${apiUrl}/savePath`, {
+                  method: "POST",
+                  headers: {
+                      "Content-Type": "application/json",
+                  },
+                  credentials: "include",
+                  body: JSON.stringify({ relativePath: relativePath }),
+              });
+              const res = await req.json();
 
-          //     pathToId[relativePath] = res.parentId;
+              pathToId[relativePath] = res.parentId;
 
-          // }
+          }
+
+          const req = await fetch(`${apiUrl}/checkFileStatus`, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type" : "application/json"
+            },
+            body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
+          });
+
+          const fileStatus = await req.json();
           
           let currChunkSize = 1 * 1024 * 1024;
+          
+          if (fileStatus === null && file.size <= currChunkSize) {
 
-          if (file.size <= currChunkSize) {
+            const formData = new FormData();
+            
 
-              let formData = new FormData();
-              
-              batchSize += file.size;
-              currSize[0] += file.size;
+            const start = performance.now();
+            formData.append("relative_path", relativePath);
+            formData.append("file", file);
+            formData.append("meta_data", JSON.stringify({parentId: pathToId[relativePath], fileName: pathArr[len-1]}));
 
-              batch.push([file, relativePath]);
-              // pathBatch.push({parentId: pathToId[relativePath], fileName: pathArr[len-1]});
 
-              if (batchSize >= currChunkSize || batch.length >= 100) {
+            await retryFetch(`${apiUrl}/uploadFile`, {
+              method: "POST",
+              credentials: "include",
+              body: formData
+            }, 10000, 500, jobId,
+            () => waitForResume(jobId));
+            
+            const end = performance.now();
+            const duration = end - start;
+            
+            const currentSpeed = updateRollingSpeed(file.size, duration, "BATCH");
+            currChunkSize = determineDynamicChunkSize(currentSpeed);
 
-                  while (batch.length > 0) {
-                      let popped = batch.pop();
-                      formData.append("relative_path", popped[1]);
-                      formData.append("file", popped[0]);
-                  }
-                  
-                  
-                  const start = performance.now();
-                  
-                  await retryFetch(`${apiUrl}/uploadFile`, {
-                    method: "POST",
-                    credentials: "include",
-                    body: formData
-                  }, 10000, 500, jobId,
-                  () => waitForResume(jobId));
-                  
-                  const end = performance.now();
-                  const duration = end - start;
-                  
-                  const currentSpeed = updateRollingSpeed(batchSize, duration, "BATCH");
-                  currChunkSize = determineDynamicChunkSize(currentSpeed);
+            currSize[0] += file.size;
 
-                  batchSize = 0;
-                  // await fetch("http://localhost:3000/saveFiles", {
-                  //     method: "POST",
-                  //     headers: {
-                  //         "Content-Type" : "application/json"
-                  //     },
-                  //     credentials: "include",
-                  //     body: JSON.stringify(pathBatch)
-                  // });
-                  // pathBatch = [];
+            updateJob({
+                jobId: jobId,
+                data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
+            });
 
-                  let pause = currJob ? currJob.pause : false;
-                  let cancel = currJob ? currJob.cancel : false;
-        
-                  updateJob({
-                      jobId: jobId, action: "upload", name: parentName, 
-                      data: {percentage: Math.round(currSize * 100 / totalSize)}, pause: pause, cancel: cancel
-                  });
-              }
           } else {
             
-            // let formData = new FormData();
-            // formData.append("relative_path", relativePath);
-            // formData.append("file", file);
-
-            // await fetch("http://localhost:3000/saveFiles", {
-            //     method: "POST",
-            //     headers: {
-            //         "Content-Type" : "application/json"
-            //     },
-            //     credentials: "include",
-            //     body: JSON.stringify([{parentId: pathToId[relativePath], fileName: pathArr[len-1]}])
-            // });
-
-            await uploadInChunks(file, relativePath, jobId, parentName, currJob, currSize, totalSize);
+            const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
+            await uploadInChunks(file, relativePath, jobId, fileStatus, currSize, totalSize, metaData);
             
 
           }
@@ -724,44 +701,25 @@ export default function Content({ fileOptions, setFileOptions }) {
           file = null;
       }
 
-      if (batch.length > 0) {
-          const formData = new FormData();
-          while (batch.length > 0) {
-              let popped = batch.pop();
-
-              formData.append("relative_path", popped[1]);
-              formData.append("file", popped[0]);
-          }
-
-          // await fetch("http://localhost:3000/saveFiles", {
-          //     method: "POST",
-          //     headers: {
-          //         "Content-Type" : "application/json"
-          //     },
-          //     credentials: "include",
-          //     body: JSON.stringify(pathBatch)
-          // });
-          // pathBatch = [];
-
-          await retryFetch(`${apiUrl}/uploadFile`, {
-              method: "POST",
-              credentials: "include",
-              body: formData
-          }, 10000, 500, jobId,
-          () => waitForResume(jobId));
-          
-      }
+      
       removeJob(jobId);
   };
 
 
-  const uploadInChunks = async (file, relativePath, jobId, parentName, currJob, currSize, totalSize) => {
+  const uploadInChunks = async (file, relativePath, jobId, fileStatus, currSize, totalSize, metaData) => {
     
-
-    // add last chunk size to last chunk index in metadata
 
     let currChunkSize = 1 * 1024 * 1024; 
     let prevEnd = 0;
+    console.log(fileStatus);
+    console.log(relativePath);
+    console.log(file.name);
+    
+    console.log(file.size);
+    if (fileStatus !== null) {
+      if (Number.parseInt(fileStatus.chunkEnd) === file.size || fileStatus.chunkEnd === "") return;
+      prevEnd = fileStatus.chunkStart === "" ? 0 : Number.parseInt(fileStatus.chunkStart);
+    }
   
     while (prevEnd < file.size) {
 
@@ -776,42 +734,39 @@ export default function Content({ fileOptions, setFileOptions }) {
       const formData = new FormData();
       formData.append("relative_path", relativePath);
       formData.append("filename", file.name);
-      formData.append("chunk_index", Math.floor(start / currChunkSize));
+      
+      formData.append("chunk_data", JSON.stringify({start: `${start}`, end: `${end}`}));
+      formData.append("meta_data", JSON.stringify(metaData));
 
-      formData.append("total_chunks", Math.ceil(file.size / currChunkSize));
       formData.append("chunk", chunk);
   
       const startTime = performance.now();
-      
+
       const response = await retryFetch(`${apiUrl}/uploadChunk`, {
         method: 'POST',
         body: formData,
         credentials: 'include'
       }, 10000, 500, jobId, () => waitForResume(jobId));
+      
   
+      const endTime = performance.now();
+      const duration = endTime - startTime;
+      
+      const currentSpeed = updateRollingSpeed(currChunkSize, duration, "CHUNK");
+      currChunkSize = determineDynamicChunkSize(currentSpeed);
+      
+
       if (!response.ok) {
         // Handle error (could retry or abort)
         return;
       }
   
-      const endTime = performance.now();
-      const duration = endTime - startTime;
-      console.log("CURR SIZE", currChunkSize, "CHUNK",chunk.size);
-      
-      const currentSpeed = updateRollingSpeed(currChunkSize, duration, "CHUNK");
-      currChunkSize = determineDynamicChunkSize(currentSpeed);
-  
-      let pause = currJob ? currJob.pause : false;
-      let cancel = currJob ? currJob.cancel : false;
 
       updateJob({
         jobId: jobId,
-        action: "upload",
-        name: parentName,
         data: { percentage: Math.round(currSize[0] * 100 / totalSize) },
-        pause: pause,
-        cancel: cancel
       });
+
     }
   };
 
@@ -844,6 +799,8 @@ export default function Content({ fileOptions, setFileOptions }) {
           data: {
             ...prevJobs[job.jobId].data,
             percentage: job.data.percentage,
+            pause: job.pause,
+            cancel: job.cancel
           }
         }
       };
@@ -923,7 +880,7 @@ export default function Content({ fileOptions, setFileOptions }) {
         <SelectionBox selectionBox={selectionBox}/>
       
       </Files>
-      {Object.keys(jobs).length && <ProgressComp 
+      {Object.keys(jobs).length > 0 && <ProgressComp 
           minimize={minimize} menuUp={menuUp} menuDown={menuDown} handleMinimize={handleMinimize} jobs={jobs} handleClose={handleClose} handlePause={handlePause}
       />
       }

@@ -1,12 +1,10 @@
 const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
-const { findUserById, findUserByUsername, registerUser, saveFile, queryFilesByParent, saveFolderStructure } = require("../prisma/queries");
+const { findUserById, findUserByUsername, registerUser, 
+  queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, saveRegularFileToDb, fileStatus } = require("../prisma/queries");
 const path = require('path');
-const { randomFillSync } = require('crypto');
-const os = require("os");
 const fs = require("fs");
 const busboy = require("busboy");
-const { pipeline } = require("stream");
 
 
 
@@ -20,10 +18,14 @@ const savePath = async (req, res) => {
     res.status(200).json({ parentId: parentId });
 };
 
-const saveFiles = async (req, res) => {
+const checkFileStatus = async (req, res) => {
+  
+  const data = req.body;
+  
+  const status = await fileStatus(data.parentId, res.locals.currentUser, data.fileName);
+  res.status(200).json(status);
 
-  await saveFile(req.body, res.locals.currentUser);
-  res.status(200).json({ success: true });
+
 };
 
 
@@ -33,14 +35,19 @@ const uploadFile = async (req, res) => {
     
     
     let baseUploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/`;
+    let metaData;
   
     bb.on("field", (name, value) => {
       if (name === "relative_path") {
         baseUploadDir = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/` + value;
       }
+      if (name === "meta_data") metaData = value;
     });
+
+    
     
     bb.on("file", (fieldname, file, info) => {
+
       const { filename } = info;
 
       const fileUploadPath = path.join(baseUploadDir, filename);
@@ -49,19 +56,13 @@ const uploadFile = async (req, res) => {
   
       const writeStream = fs.createWriteStream(fileUploadPath);
       file.pipe(writeStream);
-
-
       
-      // file.on("data", (chunk) => {
-        //   console.log("Started processing file " + fileUploadPath);
-        
-        // });
-        
+
       file.on("end", () => {
         console.log("Finished file " + fileUploadPath);
       });
 
-      writeStream.on("finish", () => {
+      writeStream.on("finish", async () => {
         console.log(`Finished writing ${filename}`);
       });
       
@@ -78,8 +79,13 @@ const uploadFile = async (req, res) => {
     });
 
     bb.on("finish", () => {
+      saveRegularFileToDb(JSON.parse(metaData), res.locals.currentUser)
+      .then(res.status(200).json({ success: true }))
+      .catch(err => {
+        console.error('Error saving file to db', err);
+        res.status(500).json({ error: 'Saving file to DB failed' });
+      });
       console.log("Upload Complete");
-      res.status(200).json({ success: true });
     });
   
     bb.on("error", (err) => {
@@ -92,83 +98,87 @@ const uploadFile = async (req, res) => {
     req.pipe(bb);
 };
 
-const META_DIR = path.join(__dirname, 'uploadMeta');
-
-fs.mkdirSync(META_DIR, { recursive: true });
 
 const uploadChunk = (req, res) => {
 
   const bb = busboy({ headers: req.headers });
-  let fileName, chunkIndex, totalChunks, relativePath;
-
+  let fileName, chunkData, relativePath, chunkMetaData;
+  
   bb.on('field', (name, value) => {
     if (name === 'relative_path') relativePath = value;
     if (name === 'filename') fileName = value;
-    if (name === 'chunk_index') chunkIndex = parseInt(value, 10);
-    if (name === 'total_chunks') totalChunks = parseInt(value, 10);
+    if (name === 'chunk_data') chunkData = value;
+    if (name === 'meta_data') chunkMetaData = value;
   });
-
+  
   bb.on('file', (fieldname, file, info) => {
-
+  
+    const tempPath = `/home/koki/Downloads/Uploads/temp/${res.locals.currentUser.id}/${relativePath}`;
     const finalPath = `/home/koki/Downloads/Uploads/${res.locals.currentUser.id}/${relativePath}`;
+  
+    fs.mkdirSync(tempPath, { recursive: true });
     fs.mkdirSync(finalPath, { recursive: true });
+  
     const finalFilePath = path.join(finalPath, fileName);
-    const writeStream = fs.createWriteStream(finalFilePath, { flags: 'a' });
-    file.pipe(writeStream);
+    const tempFilePath = path.join(tempPath, fileName);
+  
+    const tempStream = fs.createWriteStream(tempFilePath);
+    file.pipe(tempStream);
+  
+    tempStream.on('finish', () => {
+      // console.log(`Chunk ${chunkData} for ${fileName} saved to temp.`);
 
-    writeStream.on('finish', () => {
-      console.log(`Chunk ${chunkIndex} for ${fileName} saved.`);
-      
-      // Update metadata after saving each chunk
-
-      updateUploadMeta(fileName, chunkIndex, totalChunks)
-        .then(() => res.status(200).json({ success: true }))
-        .catch(err => {
-          console.error('Error updating metadata:', err);
-          res.status(500).json({ error: 'Metadata update failed' });
+      const readStream = fs.createReadStream(tempFilePath);
+      const writeStream = fs.createWriteStream(finalFilePath, { flags: 'a' });
+  
+      readStream.pipe(writeStream);
+  
+      writeStream.on('finish', async () => {
+        // console.log(`Chunk ${chunkData} appended to ${fileName} in final destination.`);
+  
+        fs.unlink(tempFilePath, (unlinkErr) => {
+          if (unlinkErr) {
+            console.error('Error removing temporary chunk file:', unlinkErr);
+          }
         });
+  
+        updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), res.locals.currentUser)
+          .then(() => res.status(200).json({ success: true }))
+          .catch(err => {
+            console.error('Error updating metadata:', err);
+            res.status(500).json({ error: 'Metadata update failed' });
+          });
+      });
+  
+      readStream.on('error', err => {
+        console.error('Error reading from temp file:', err);
+        res.status(500).json({ error: 'Error reading from temp file' });
+      });
+      writeStream.on('error', err => {
+        console.error('Error writing to final file:', err);
+        res.status(500).json({ error: 'Error writing to final file' });
+      });
     });
-
-    writeStream.on('error', (err) => {
-      console.error('Error writing chunk:', err);
+  
+    tempStream.on('error', (err) => {
+      console.error('Error writing chunk to temp file:', err);
       res.status(500).json({ error: 'Chunk write error' });
     });
   });
-
+  
   bb.on('error', (err) => {
     console.error('Busboy error:', err);
     res.status(500).json({ error: 'Upload failed' });
   });
-
+  
   req.pipe(bb);
 
 };
-const updateUploadMeta = (fileName, chunkIndex, totalChunks) => {
-  return new Promise((resolve, reject) => {
-    const metaPath = path.join(META_DIR, `${fileName}.json`);
-    let meta = { fileName, totalChunks, receivedChunks: [] };
+const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
 
-    // Read existing metadata if available
-    if (fs.existsSync(metaPath)) {
-      try {
-        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      } catch (err) {
-        console.error('Error parsing metadata:', err);
-      }
-    }
-    
-    // Add chunk index if not already recorded
-    if (!meta.receivedChunks.includes(chunkIndex)) {
-      meta.totalChunks = totalChunks;
-      meta.receivedChunks.push(chunkIndex);
-    }
-    
-    fs.writeFile(metaPath, JSON.stringify(meta), (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
-  });
-}
+  await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
+  
+};
 
 // const uploadFile = [upload.single('file_upload'), async (req, res) => {
 
@@ -260,5 +270,5 @@ module.exports = {
     savePath,
     isAuth,
     getFilesByParent,
-    saveFiles
+    checkFileStatus
 }

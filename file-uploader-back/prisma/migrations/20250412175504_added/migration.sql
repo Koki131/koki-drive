@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "File" ALTER COLUMN "chunkEnd" SET DEFAULT -1,
+ALTER COLUMN "chunkStart" SET DEFAULT -1;

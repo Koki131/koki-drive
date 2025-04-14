@@ -22,17 +22,20 @@ model User {
 }
 
 model File {
-  id        Int       @id @default(autoincrement())
-  name      String    
-  type      FileType  @default(FILE)
-  createdAt DateTime  @default(now())
+  id         Int       @id @default(autoincrement())
+  name       String    
+  type       FileType  @default(FILE)
+  createdAt  DateTime  @default(now())
 
-  parentId  Int?      
-  parent    File?     @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
-  children  File[]    @relation("ParentChild")
+  parentId   Int?      
+  parent     File?     @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
+  children   File[]    @relation("ParentChild")
 
-  userId    Int      
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int      
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  chunkStart String @default("")
+  chunkEnd   String @default("")
   
   @@index([parentId, name])
 }

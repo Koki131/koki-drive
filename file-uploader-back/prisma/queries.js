@@ -58,7 +58,7 @@ const queryFilesByParent = async (userId, parent) => {
             parentId: parentId,
         }
     });
-
+    
     return res;
 
 };
@@ -78,17 +78,17 @@ const saveFolderStructure = async (filePath, user) => {
                 userId: user.id,
                 name: segment,
                 parentId: parentId,
-                type: "FOLDER"
+                type: "FOLDER",
             }
         });
 
-        if (!folder) {
+        if (!folder) {         
             folder = await prisma.file.create({
                 data: {
                     user: {connect: {id: user.id}},
                     name: segment,
                     parent: parentId ? {connect: {id: parentId}} : {},
-                    type: "FOLDER"
+                    type: "FOLDER",
                 }
             });
         }
@@ -98,14 +98,14 @@ const saveFolderStructure = async (filePath, user) => {
     return parentId;
 };
 
-const saveFile = async (obj, user) => {
 
-    // console.log(obj);
+const saveRegularFileToDb = async (obj, user) => {
+
+    const parentId = obj.parentId;
+    const fileName = obj.fileName;
+    const file = await fileExists(fileName, parentId, user.id);
     
-    for (const file of obj) {
-        
-        const parentId = file.parentId;
-        const fileName = file.fileName;
+    if (!file) {
 
         await prisma.file.create({
             data: {
@@ -115,10 +115,81 @@ const saveFile = async (obj, user) => {
                 parent: parentId ? {connect: {id: parentId}} : {},
             }
         });
+
     }
+    
+};
+
+const fileExists = async (fileName, parentId, userId) => {
+
+    const file = await prisma.file.findFirst({
+        where: {
+            name: fileName,
+            userId: userId,
+            parentId: parentId,
+            type: "FILE"
+        }
+    });
+
+    return file;
 
 };
 
+const fileStatus = async (parentId, user, fileName) => {
+
+    const file = await fileExists(fileName, parentId, user.id);
+    
+    if (!file) return null;
+
+    console.log(parentId, fileName);
+    
+
+    return {chunkStart: file.chunkStart, chunkEnd: file.chunkEnd};
+
+};
+
+
+const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
+
+    const parentId = obj.parentId;
+    const fileName = obj.fileName;
+
+    
+    const file = await fileExists(fileName, parentId, user.id);
+
+    if (!file) {
+        // console.log(fileName);
+        
+        await prisma.file.create({
+            data: {
+                name: fileName,
+                type: "FILE",
+                user: {connect:{id: user.id}},
+                parent: parentId ? {connect: {id: parentId}} : {},
+                chunkStart: chunkData.start,
+                chunkEnd: chunkData.end,
+            }
+        });
+    } else {
+        
+        await prisma.file.update({
+
+            where: {
+                id: file.id,
+                userId: user.id,
+                parentId: parentId,
+                type: "FILE",
+            },
+            data: {
+                chunkStart: chunkData.start,
+                chunkEnd: chunkData.end,
+            },
+
+        });
+
+    }
+
+};
 
 
 
@@ -127,7 +198,9 @@ module.exports = {
     findUserByUsername,
     registerUser,
     getFiles,
-    saveFile,
+    fileStatus,
+    saveOrUpdateChunkedFileToDb,
+    saveRegularFileToDb,
     queryFilesByParent,
-    saveFolderStructure
+    saveFolderStructure,
 }
