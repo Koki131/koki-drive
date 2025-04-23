@@ -141,9 +141,6 @@ const fileStatus = async (parentId, user, fileName) => {
     
     if (!file) return null;
 
-    console.log(parentId, fileName);
-    
-
     return {chunkStart: file.chunkStart, chunkEnd: file.chunkEnd};
 
 };

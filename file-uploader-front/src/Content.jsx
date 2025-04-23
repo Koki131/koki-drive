@@ -368,11 +368,11 @@ export default function Content({ fileOptions, setFileOptions }) {
           height: Math.round(rect.height),
         };
       });
-
+      
       coords.forEach((file) => {
         const r = Math.floor(file.y / file.height);
         const c = Math.floor(file.x / file.width);
-
+        
         const key = `${r}_${c}`;
         
         file["image"] = {
@@ -386,14 +386,17 @@ export default function Content({ fileOptions, setFileOptions }) {
           width: fileCoords["name"].width , height: fileCoords["name"].height
         };
         grid[key] = file;
-
+        
       });
+      console.log(coords);
       
     }
   };
 
   const getFilesInSelection = (selectionBox) => {    
     
+    console.log(selectionBox);
+    console.log(grid);
     
     const startRow = Math.floor(selectionBox.y / height);
     const startCol = Math.floor(selectionBox.x / width);
@@ -626,7 +629,7 @@ export default function Content({ fileOptions, setFileOptions }) {
               path.push(p);
               path.push("/");
           }
-
+          
           let relativePath = path.join("");
           
           // ******* IMPORTANT ***********
@@ -646,57 +649,27 @@ export default function Content({ fileOptions, setFileOptions }) {
 
           }
 
-          const req = await fetch(`${apiUrl}/checkFileStatus`, {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type" : "application/json"
-            },
-            body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
+          // const req = await fetch(`${apiUrl}/checkFileStatus`, {
+          //   method: "POST",
+          //   credentials: "include",
+          //   headers: {
+          //     "Content-Type" : "application/json"
+          //   },
+          //   body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
+          // });  
+
+          // const fileStatus = await req.json();
+          
+          const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
+          await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
+            
+            
+          
+
+          updateJob({
+              jobId: jobId,
+              data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
           });
-
-          const fileStatus = await req.json();
-          
-          let currChunkSize = 1 * 1024 * 1024;
-          
-          if (fileStatus === null && file.size <= currChunkSize) {
-
-            const formData = new FormData();
-            
-
-            const start = performance.now();
-            formData.append("relative_path", relativePath);
-            formData.append("file", file);
-            formData.append("meta_data", JSON.stringify({parentId: pathToId[relativePath], fileName: pathArr[len-1]}));
-
-
-            await retryFetch(`${apiUrl}/uploadFile`, {
-              method: "POST",
-              credentials: "include",
-              body: formData
-            }, 10000, 500, jobId,
-            () => waitForResume(jobId));
-            
-            const end = performance.now();
-            const duration = end - start;
-            
-            const currentSpeed = updateRollingSpeed(file.size, duration, "BATCH");
-            currChunkSize = determineDynamicChunkSize(currentSpeed);
-
-            currSize[0] += file.size;
-
-            updateJob({
-                jobId: jobId,
-                data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
-            });
-
-          } else {
-            
-            const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
-            await uploadInChunks(file, relativePath, jobId, fileStatus, currSize, totalSize, metaData);
-            
-
-          }
           
           file = null;
       }
@@ -706,20 +679,19 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
 
-  const uploadInChunks = async (file, relativePath, jobId, fileStatus, currSize, totalSize, metaData) => {
+  const uploadInChunks = async (file, relativePath, jobId, currSize, totalSize, metaData) => {
     
 
     let currChunkSize = 1 * 1024 * 1024; 
     let prevEnd = 0;
-    console.log(fileStatus);
-    console.log(relativePath);
-    console.log(file.name);
-    
-    console.log(file.size);
-    if (fileStatus !== null) {
-      if (Number.parseInt(fileStatus.chunkEnd) === file.size || fileStatus.chunkEnd === "") return;
-      prevEnd = fileStatus.chunkStart === "" ? 0 : Number.parseInt(fileStatus.chunkStart);
-    }
+
+    // if (fileStatus !== null) {
+    //   if (Number.parseInt(fileStatus.chunkEnd) === file.size ) {
+    //     currSize[0] += file.size;
+    //     return;
+    //   }
+    //   prevEnd = fileStatus.chunkStart === "" ? 0 : Number.parseInt(fileStatus.chunkStart);
+    // }
   
     while (prevEnd < file.size) {
 
@@ -732,13 +704,13 @@ export default function Content({ fileOptions, setFileOptions }) {
       currSize[0] += chunk.size;
   
       const formData = new FormData();
+      
       formData.append("relative_path", relativePath);
       formData.append("filename", file.name);
-      
-      formData.append("chunk_data", JSON.stringify({start: `${start}`, end: `${end}`}));
       formData.append("meta_data", JSON.stringify(metaData));
-
-      formData.append("chunk", chunk);
+      formData.append("chunk_data", JSON.stringify({start: `${start}`, end: `${end}`}));
+      formData.append("chunk", chunk);      
+      
   
       const startTime = performance.now();
 
