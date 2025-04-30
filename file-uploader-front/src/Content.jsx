@@ -36,7 +36,7 @@ const Files = styled.div`
 `;
 const FolderContainer = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(auto-fill, 100px);
 `;
 const FileContainer = styled.div`
   height: 100px;
@@ -190,6 +190,7 @@ const StyledFileCount = styled.div`
   margin-right: 2%;
 `
 
+
 let grid = {};
 let width = 100;
 let height = 100;
@@ -211,6 +212,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [containerRect, setContainerRect] = useState(null);
   const [minimize, setMinimize] = useState(false);
   const [updateFiles, setUpdateFiles] = useState(false);
+  const [fileContextWindow, setFileContextWindow] = useState({visible: false, x: 0, y: 0});
   const [jobs, setJobs] = useState({});
   const jobsRef = useRef(jobs);
 
@@ -292,8 +294,47 @@ export default function Content({ fileOptions, setFileOptions }) {
 
 
   const handleSelected = (e, fileId) => {
+    e.preventDefault();
     e.stopPropagation();
     setSelectedFile(fileId);
+    setSelectedFiles(null);
+    setFileContextWindow({visible: false, x: 0, y: 0});
+  };
+
+  const handleRightClick = (e, fileId) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!fileId) {
+      setFileContextWindow({visible: false, x: 0, y: 0});
+      setSelectedFiles(null);
+      return;
+    }
+    if (selectedFiles && !selectedFiles[fileId]) {
+      setFileContextWindow({visible: false, x: 0, y: 0});
+      setSelectedFiles(null);
+      return;
+    }
+
+        
+    const x = e.clientX;
+    const y = e.clientY;
+
+    if (!fileContextWindow.visible) {
+      if (!selectedFiles) {
+        setSelectedFile(fileId);
+      }
+    }
+
+    setFileContextWindow((prev) => {
+      
+      return {
+        visible: !prev.visible,
+        x: x,
+        y: y
+      };
+
+    });
   };
 
   const handleHighlight = (fileId, shouldHighlight) => {
@@ -301,11 +342,17 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
   const handleMouseDown = (e) => {
+    const target = e.target;
     if (e.button !== 0) return;
     if (!fileContainerRef.current) return;
-  
+    if (target.closest('[data-context-window="true"]')) return;
+    if (target.closest('[file-image-id]') || target.closest('[file-name-id]')) return;
+    
+    
+    setFileContextWindow({visible: false, x: 0, y: 0});
+    setSelectedFile(null);
     setSelectedFiles(null);
-    setFileOptions(false);
+    setFileOptions(false);    
 
     const containerRect = fileContainerRef.current.getBoundingClientRect();
 
@@ -353,16 +400,16 @@ export default function Content({ fileOptions, setFileOptions }) {
 
       let rect = null;
       grid = {};
-
+      
       const coords = Array.from(fileElements).map((el, index) => {
         const fileId = el.getAttribute('data-file-id');
         rect = el.getBoundingClientRect();
-        let valX = (Math.floor((rect.left - containerRect.left) / 100)) * (100 + Math.floor(rect.width) % 100);
-
+        // let valX = (Math.floor((rect.left - containerRect.left) / 100)) * (100 + Math.floor(rect.width) % 100);
+ 
         
         return {
           fileId,
-          x: valX,
+          x: Math.round((rect.left - containerRect.left)),
           y: Math.round((rect.top + fileContainerRef.current.scrollTop) - containerRect.top),
           width: Math.round(rect.width),
           height: Math.round(rect.height),
@@ -388,15 +435,14 @@ export default function Content({ fileOptions, setFileOptions }) {
         grid[key] = file;
         
       });
-      console.log(coords);
       
     }
   };
 
   const getFilesInSelection = (selectionBox) => {    
     
-    console.log(selectionBox);
-    console.log(grid);
+    // console.log(selectionBox);
+    // console.log(grid);
     
     const startRow = Math.floor(selectionBox.y / height);
     const startCol = Math.floor(selectionBox.x / width);
@@ -541,7 +587,6 @@ export default function Content({ fileOptions, setFileOptions }) {
           res = await waitForResume();
 
           if (res === 'closed') {
-            console.log("FIRST");
             
             deleteJob(jobId);
             throw new Error("Upload cancelled by user");
@@ -816,12 +861,51 @@ export default function Content({ fileOptions, setFileOptions }) {
     });
   };
 
+  const handleDownload = () => {
+    
+    let fileIds = null;
+
+    if (selectedFiles && Object.keys(selectedFiles).length > 0) {
+      fileIds = Object.keys(selectedFiles);
+    } else if (selectedFile) {
+      fileIds = [selectedFile];
+    } else {
+      console.warn("No files selected for download.");
+      alert("Please select at least one file to download.");
+      return;
+    }
+
+    console.log("Initiating download via form submission for IDs:", fileIds);
+
+    const form = document.createElement('form');
+    form.style.display = 'none';
+    form.method = 'POST';
+    form.action = `${apiUrl}/download`;
+
+
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'fileIdsJson';
+    input.value = JSON.stringify(fileIds);
+    form.appendChild(input);
+
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+
+    console.log("Form submitted to trigger download.");
+
+
+  };
+
   return (
     <ContentContainer>
       <Sidebar 
         fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
-      <Files ref={fileContainerRef} onClick={(e) => handleSelected(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
+      <Files ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
           <p>Loading files...</p>
         ) : 
@@ -833,6 +917,7 @@ export default function Content({ fileOptions, setFileOptions }) {
               >
                 <FileTempContainer
                   onClick={(e) => handleSelected(e, file.id)} 
+                  onContextMenu={(e) => handleRightClick(e, file.id)}
                   onDoubleClick={() => handleClick(file)}
                   onMouseEnter={() => handleHighlight(file.id, true)} onMouseLeave={() => handleHighlight(file.id, false)}  
                 >
@@ -847,6 +932,15 @@ export default function Content({ fileOptions, setFileOptions }) {
                 </FileTempContainer>
               </FileContainer>
           ))}
+          {fileContextWindow.visible && 
+          <ContextWindow
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onMouseDownCapture={(e) => e.stopPropagation()}
+          fileContextWindow={fileContextWindow} handleDownload={handleDownload}/>
+          }
           </FolderContainer>
         }
         <SelectionBox selectionBox={selectionBox}/>
@@ -913,5 +1007,34 @@ function SelectionBox({ selectionBox }) {
       backgroundColor: 'rgba(134, 69, 199, 0.2)',
     }}
   />
+  );
+};
+
+const FileContextWindow = styled.div`
+  position: fixed; 
+  top: ${props => props.y}px;
+  left: ${props => props.x}px;
+  width: 100px;
+  min-height: 150px;
+  background-color: white;
+  border: 1px solid #ccc;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+`;
+
+function ContextWindow({ fileContextWindow, handleDownload }) {
+
+  const { x, y } = fileContextWindow;
+
+  return (
+    <FileContextWindow x={x} y={y} data-context-window="true" >
+      <a href="#" onClick={handleDownload} style={{color: 'black'}}>Download</a>
+      <a href="#">Copy</a>
+      <a href="#">Rename</a>
+      <a href="#">Delete</a>
+    </FileContextWindow>
   );
 };

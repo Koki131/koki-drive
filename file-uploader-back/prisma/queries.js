@@ -49,6 +49,18 @@ const getFiles = async (id) => {
 
 };
 
+const getFileById = async (id) => {
+
+    const res = await prisma.file.findFirst({
+        where: {
+            id: id
+        }
+    });
+
+    return res;
+
+};
+
 const queryFilesByParent = async (userId, parent) => {
     const parentId = parent ? Number.parseInt(parent) : null;
 
@@ -188,6 +200,38 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
 
 };
 
+const getFullPaths = async (fileIds, orgPath) => {
+    
+    const res = [];
+
+    for (let id of fileIds) {
+        const temp = await getPath(id, 0);
+        
+        const path = `${orgPath}${temp.path}`;
+        const type = temp.type;
+
+        res.push({path: path, type: type});
+    }
+    
+    return res;
+
+};
+
+const getPath = async (fileId, idx) => {
+
+    const file = await getFileById(Number.parseInt(fileId));
+
+    if (!file.parentId) {
+        return {path: "/" + file.name + "/", type: file.type};
+    }
+    const name = file ? file.name : "";
+    const slash = idx === 0 ? "" : "/";
+
+    const tempPath = await getPath(file.parentId, idx + 1).path + name + slash;
+
+    return {path: tempPath, type: file.type};
+};
+
 
 
 module.exports = {
@@ -200,4 +244,5 @@ module.exports = {
     saveRegularFileToDb,
     queryFilesByParent,
     saveFolderStructure,
+    getFullPaths
 }

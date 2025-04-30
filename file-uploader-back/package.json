@@ -13,11 +13,13 @@
   "description": "",
   "dependencies": {
     "@quixo3/prisma-session-store": "^3.1.13",
+    "archiver": "^7.0.1",
     "async": "^3.2.6",
     "bcryptjs": "^3.0.2",
     "body-parser": "^1.20.3",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
     "ejs": "^3.1.10",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
