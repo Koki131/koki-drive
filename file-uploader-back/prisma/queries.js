@@ -209,8 +209,9 @@ const getFullPaths = async (fileIds, orgPath) => {
         
         const path = `${orgPath}${temp.path}`;
         const type = temp.type;
-
-        res.push({path: path, type: type});
+        const name = temp.name;
+        
+        res.push({path: path, type: type, name: name});
     }
     
     return res;
@@ -222,16 +223,51 @@ const getPath = async (fileId, idx) => {
     const file = await getFileById(Number.parseInt(fileId));
 
     if (!file.parentId) {
-        return {path: "/" + file.name + "/", type: file.type};
+        return {path: String("/" + file.name + "/"), type: file.type, name: file.name};
     }
     const name = file ? file.name : "";
     const slash = idx === 0 ? "" : "/";
+    
+    
+    const temp = await getPath(file.parentId, idx + 1);
 
-    const tempPath = await getPath(file.parentId, idx + 1).path + name + slash;
-
-    return {path: tempPath, type: file.type};
+    const tempPath = temp.path + name + slash;
+    
+    return {path: tempPath, type: file.type, name: file.name};
 };
 
+const renameFile = async (fileId, newName, orgPath) => {
+
+    
+    const file = await prisma.file.findUnique({
+        where: {
+            id: fileId
+        }
+    });
+
+    const res = await prisma.file.findFirst({
+        where: {
+            parentId: file.parentId,
+            name: newName
+        }
+    });
+    
+    if (res) {
+        return null;
+    }
+    
+    const updateName = await prisma.file.update({
+        where: {
+            id: fileId
+        },
+        data: {
+            name: newName
+        }
+    });
+
+    return updateName ? await getFullPaths([fileId], orgPath) : null;
+
+};
 
 
 module.exports = {
@@ -244,5 +280,6 @@ module.exports = {
     saveRegularFileToDb,
     queryFilesByParent,
     saveFolderStructure,
-    getFullPaths
+    getFullPaths,
+    renameFile
 }

@@ -1,11 +1,13 @@
 const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
 const { findUserById, findUserByUsername, registerUser, 
-  queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths } = require("../prisma/queries");
+  queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
+  renameFile} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
 const archiver = require('archiver');
+const sanitize = require('sanitize-filename');
 require('dotenv').config()
 
 
@@ -134,6 +136,51 @@ const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
   
 };
 
+const rename = async (req, res) => {
+
+  const fileId = req.body.fileId;
+  const name = req.body.name;
+  const user = res.locals.currentUser;
+
+  const userUploadPath = path.join(uploadPath, String(user.id));
+
+  const orgPath = await getFullPaths([fileId], userUploadPath);
+  
+  const fullOrgPath = orgPath ? orgPath[0] : null;
+
+  if (!fullOrgPath) return res.status(400).json({ message: "File doesn't exist"});
+  
+  
+  const extension = fullOrgPath && fullOrgPath.type === 'FILE' ? path.extname(fullOrgPath.name) : "";
+
+  const newFilename = name + extension;
+
+  const newPath = await renameFile(fileId, newFilename, userUploadPath);
+
+  const fullNewPath = newPath ? newPath[0] : null;
+  
+  if (!fullNewPath) return res.status(400).json({ message: 'Name already exists' });
+
+
+  try {
+
+      
+    fs.rename(fullOrgPath.path, fullNewPath.path, () => {});
+      
+      
+  } catch (e) {
+
+    const undoNameChange = await renameFile(fileId, fullOrgPath.name, userUploadPath);
+    fs.rename(fullNewPath.path, fullOrgPath.path, () => {});
+
+  }
+  
+
+  
+  return res.status(200).json({message: 'Rename success'});
+
+};
+
 const download = async (req, res) => {
 
   try {
@@ -147,7 +194,6 @@ const download = async (req, res) => {
     const userUploadPath = path.join(uploadPath, String(res.locals.currentUser.id));
 
     const paths = await getFullPaths(fileIds, userUploadPath);
-
 
 
     const archiveName = `download_${Date.now()}.zip`;
@@ -333,5 +379,6 @@ module.exports = {
     isAuth,
     getFilesByParent,
     checkFileStatus,
-    download
+    download,
+    rename
 }

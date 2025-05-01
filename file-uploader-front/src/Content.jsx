@@ -189,7 +189,10 @@ const StyledFileCount = styled.div`
   font-size: 0.7vw;
   margin-right: 2%;
 `
-
+const TextArea = styled.textarea`
+    width: 70px;
+    resize: none;
+`
 
 let grid = {};
 let width = 100;
@@ -211,9 +214,11 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
   const [containerRect, setContainerRect] = useState(null);
   const [minimize, setMinimize] = useState(false);
-  const [updateFiles, setUpdateFiles] = useState(false);
   const [fileContextWindow, setFileContextWindow] = useState({visible: false, x: 0, y: 0});
   const [jobs, setJobs] = useState({});
+  const [updateFiles, setUpdateFiles] = useState(false);
+  const [shouldRename, setShouldRename] = useState(-1);
+  const [newName, setNewName] = useState("");
   const jobsRef = useRef(jobs);
 
   useEffect(() => {
@@ -341,13 +346,32 @@ export default function Content({ fileOptions, setFileOptions }) {
     setHighlight({fileId, shouldHighlight});
   };
 
-  const handleMouseDown = (e) => {
+  const handleMouseDown = async (e) => {
     const target = e.target;
     if (e.button !== 0) return;
     if (!fileContainerRef.current) return;
     if (target.closest('[data-context-window="true"]')) return;
-    if (target.closest('[file-image-id]') || target.closest('[file-name-id]')) return;
+
     
+    if (shouldRename !== -1 && !target.closest('[text-area-id]')) {
+      // rename in database
+      // rename in filesystem
+      await fetch(`${apiUrl}/rename`, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        credentials: "include",
+        body: JSON.stringify({
+          fileId: shouldRename,
+          name: newName.trim()
+        })
+      });
+      
+      setShouldRename(-1);
+    }
+    
+    if (target.closest('[file-image-id]') || target.closest('[file-name-id]')) {
+      return;
+    }
     
     setFileContextWindow({visible: false, x: 0, y: 0});
     setSelectedFile(null);
@@ -359,9 +383,11 @@ export default function Content({ fileOptions, setFileOptions }) {
     const startX = Math.round(e.clientX - containerRect.left);
     const startY = Math.round((e.clientY + fileContainerRef.current.scrollTop) - containerRect.top);
     
-    setContainerRect(containerRect);
-    setFileSize();
-    setSelectionStart({startPoint: { x: startX, y: startY }, isSelecting: true});
+    if (shouldRename === -1) {
+      setContainerRect(containerRect);
+      setFileSize();
+      setSelectionStart({startPoint: { x: startX, y: startY }, isSelecting: true});
+    } 
     
   };
 
@@ -393,6 +419,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
   const getFileRects = () => {
+    
     if (!loading && fileContainerRef.current) {
       
       const containerRect = fileContainerRef.current.getBoundingClientRect();
@@ -862,7 +889,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
   const handleDownload = () => {
-    
+
     let fileIds = null;
 
     if (selectedFiles && Object.keys(selectedFiles).length > 0) {
@@ -900,6 +927,29 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   };
 
+  const handleRename = () => {
+
+    let fileId = null;
+    const selFiles = selectedFiles ? Object.keys(selectedFiles) : null;
+
+    if (selFiles) {
+      fileId = selFiles[0];
+    } else if (selectedFile) {
+      fileId = selectedFile;
+    }
+    
+    const file = files.find((f) => f.id === Number.parseInt(fileId));
+    
+    setFileContextWindow({visible: false, x:0, y:0});
+    if (file) setNewName(file.name);
+    setShouldRename(Number.parseInt(fileId));
+
+  };
+
+  const handleNameChange = (e) => {
+    setNewName(e.target.value);
+  };
+
   return (
     <ContentContainer>
       <Sidebar 
@@ -923,23 +973,39 @@ export default function Content({ fileOptions, setFileOptions }) {
                 >
                   <FileImage file-image-id={file.id} src={file.type === "FOLDER" ? folderImage : fileImage} 
                   alt="file or folder image"/>
-                  <FileName file-name-id={file.id} style={
-                  {backgroundColor: (file.id === selectedFile || (selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
-                  (file.id === highlight.fileId && highlight.shouldHighlight) ? "rgba(102, 51, 153, 0.2)" : "transparent"}
-                }>
-                  {file.name}
-                  </FileName>
+                  {shouldRename !== file.id ? 
+                    <FileName 
+                    file-name-id={file.id} 
+                    style={
+                    {backgroundColor: (file.id === selectedFile || (selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
+                    (file.id === highlight.fileId && highlight.shouldHighlight) ? "rgba(102, 51, 153, 0.2)" : "transparent"}
+                    }>
+                    {file.name}
+                    </FileName>
+                    :
+                    <TextArea 
+                    text-area-id={file.id}
+                    onClick={(e) => e.stopPropagation()} 
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => e.stopPropagation()}
+                    value={newName} onChange={(e) => handleNameChange(e)}/>
+                  }
                 </FileTempContainer>
               </FileContainer>
           ))}
           {fileContextWindow.visible && 
           <ContextWindow
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          onMouseDownCapture={(e) => e.stopPropagation()}
-          fileContextWindow={fileContextWindow} handleDownload={handleDownload}/>
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onMouseDownCapture={(e) => e.stopPropagation()}
+            fileContextWindow={fileContextWindow} 
+            handleDownload={handleDownload}
+            handleRename={handleRename}
+            selectedFile={selectedFile}
+            selectedFiles={selectedFiles}
+          />
           }
           </FolderContainer>
         }
@@ -953,6 +1019,7 @@ export default function Content({ fileOptions, setFileOptions }) {
     </ContentContainer>
   );
 }
+
 
 function ProgressComp({ minimize, menuUp, menuDown, handleMinimize, jobs, handleClose, handlePause }) {
 
@@ -1025,7 +1092,7 @@ const FileContextWindow = styled.div`
   flex-direction: column;
 `;
 
-function ContextWindow({ fileContextWindow, handleDownload }) {
+function ContextWindow({ fileContextWindow, handleDownload, handleRename, selectedFiles, selectedFile }) {
 
   const { x, y } = fileContextWindow;
 
@@ -1033,7 +1100,7 @@ function ContextWindow({ fileContextWindow, handleDownload }) {
     <FileContextWindow x={x} y={y} data-context-window="true" >
       <a href="#" onClick={handleDownload} style={{color: 'black'}}>Download</a>
       <a href="#">Copy</a>
-      <a href="#">Rename</a>
+      {((selectedFiles && Object.keys(selectedFiles).length === 1) || selectedFile) && <a href="#" onClick={handleRename}>Rename</a>}
       <a href="#">Delete</a>
     </FileContextWindow>
   );
