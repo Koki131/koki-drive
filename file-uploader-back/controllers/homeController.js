@@ -2,12 +2,11 @@ const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
 const { findUserById, findUserByUsername, registerUser, 
   queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
-  renameFile} = require("../prisma/queries");
+  renameFile, deleteFile } = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
 const archiver = require('archiver');
-const sanitize = require('sanitize-filename');
 require('dotenv').config()
 
 
@@ -180,6 +179,52 @@ const rename = async (req, res) => {
   return res.status(200).json({message: 'Rename success'});
 
 };
+
+const deleteFiles = async (req, res) => {
+
+  const filesToDelete = req.body;
+  const user = res.locals.currentUser;
+
+  const userUploadPath = path.join(uploadPath, String(user.id));
+
+  const filePaths = await getFullPaths(filesToDelete, userUploadPath);
+
+  const errors = [];
+
+  for (const file of filePaths) {
+  
+      
+    if (file.type === 'FILE') {
+      fs.unlink(file.path, (err) => {
+        if (err) {
+          errors.push(`Unable to delete ${file.name}`);
+          console.error(`Error deleting file ${file.path}:`, err);
+        }
+      });
+    } else {
+      fs.rm(file.path, {recursive: true}, (err) => {
+        if (err) {
+          errors.push(`Unable to delete ${file.name}`);
+          console.error(`Error deleting file ${file.path}:`, err);
+        } 
+      });
+    }  
+    
+    
+  }
+
+  for (const fileId of filesToDelete) {
+    try {
+      await deleteFile(Number.parseInt(fileId));
+    } catch (e) {
+      errors.push(`Unable to delete ${fileId}`);
+    }
+  }
+
+  return res.status(200).json({message: "Deleted successfully", errors: errors});
+  
+
+}; 
 
 const download = async (req, res) => {
 
@@ -380,5 +425,6 @@ module.exports = {
     getFilesByParent,
     checkFileStatus,
     download,
-    rename
+    rename,
+    deleteFiles
 }

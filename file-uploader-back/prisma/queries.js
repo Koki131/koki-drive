@@ -269,6 +269,16 @@ const renameFile = async (fileId, newName, orgPath) => {
 
 };
 
+const deleteFile = async (fileId) => {
+
+    await prisma.file.delete({
+        where: {
+            id: fileId
+        }
+    });
+
+};
+
 
 module.exports = {
     findUserById,
@@ -281,5 +291,6 @@ module.exports = {
     queryFilesByParent,
     saveFolderStructure,
     getFullPaths,
-    renameFile
+    renameFile,
+    deleteFile
 }
