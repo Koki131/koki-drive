@@ -203,6 +203,7 @@ const TextArea = styled.textarea`
     }
 `
 
+
 let grid = {};
 let width = 100;
 let height = 100;
@@ -216,9 +217,9 @@ export default function Content({ fileOptions, setFileOptions }) {
   const { folderId } = useParams();
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState([]);
-  const [selectedFile, setSelectedFile] = useState(-1);
   const [highlight, setHighlight] = useState({fileId: -2, highlight: false});
   const [selectedFiles, setSelectedFiles] = useState(null);
+  const [rightClickSelectedFile, setRightClickSelectedFile] = useState(null);
   const [selectionBox, setSelectionBox] = useState(null);
   const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
   const [containerRect, setContainerRect] = useState(null);
@@ -228,6 +229,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [updateFiles, setUpdateFiles] = useState(false);
   const [shouldRename, setShouldRename] = useState(-1);
   const [newName, setNewName] = useState("");
+  const [filesCopied, setFilesCopied] = useState([]);
   const jobsRef = useRef(jobs);
 
   useEffect(() => {
@@ -310,8 +312,12 @@ export default function Content({ fileOptions, setFileOptions }) {
   const handleSelected = (e, fileId) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedFile(fileId);
-    setSelectedFiles(null);
+
+    const temp = {};
+    if (fileId) {
+      temp[fileId] = {fileId: fileId};
+    }
+    setSelectedFiles(temp);
     setFileContextWindow({visible: false, x: 0, y: 0});
   };
 
@@ -319,6 +325,8 @@ export default function Content({ fileOptions, setFileOptions }) {
     e.preventDefault();
     e.stopPropagation();
 
+    setRightClickSelectedFile(fileId);
+  
     if (shouldRename !== -1) {
       if (newName.trim() !== "") {
         await fetch(`${apiUrl}/rename`, {
@@ -340,24 +348,23 @@ export default function Content({ fileOptions, setFileOptions }) {
     
     setShouldRename(-1);
 
-    if (!fileId) {
-      setFileContextWindow({visible: false, x: 0, y: 0});
+    if (!fileId || (selectedFiles && !selectedFiles[fileId])) {
       setSelectedFiles(null);
-      return;
-    }
-    if (selectedFiles && !selectedFiles[fileId]) {
-      setFileContextWindow({visible: false, x: 0, y: 0});
-      setSelectedFiles(null);
-      return;
     }
     
     
     const x = e.clientX;
     const y = e.clientY;
 
+    console.log(fileContextWindow, selectedFiles);
     if (!fileContextWindow.visible) {
-      if (!selectedFiles) {
-        setSelectedFile(fileId);
+      if (!selectedFiles || Object.keys(selectedFiles).length === 0) {
+    
+        const temp = {};
+        if (fileId) {
+          temp[fileId] = {fileId: fileId};
+        }
+        setSelectedFiles(temp);
       }
     }
 
@@ -378,6 +385,10 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   const handleMouseDown = async (e) => {
     const target = e.target;
+
+    if (!target.closest('[data-context-window="true"]') && target.closest('[file-image-id]') === null && target.closest('[file-name-id]') === null) {
+      setRightClickSelectedFile(null);
+    }
     if (e.button !== 0) return;
     if (!fileContainerRef.current) return;
     if (target.closest('[data-context-window="true"]')) return;
@@ -402,6 +413,8 @@ export default function Content({ fileOptions, setFileOptions }) {
           file.id === shouldRename ? { ...file, name: newName.trim() } : file
         )
       );
+
+      setShouldRename(-1);
       
     }
     
@@ -409,9 +422,7 @@ export default function Content({ fileOptions, setFileOptions }) {
       return;
     }
     
-    setShouldRename(-1);
     setFileContextWindow({visible: false, x: 0, y: 0});
-    setSelectedFile(null);
     setSelectedFiles(null);
     setFileOptions(false);    
 
@@ -724,61 +735,65 @@ export default function Content({ fileOptions, setFileOptions }) {
       
       addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
 
-
+      
       for (let file of form[0].files) {
+        
+        
+        const pathArr = file.webkitRelativePath.split("/");
+        const len = pathArr.length;
+        
+        let path = [];
+        
+        for (let i = 0; i < len-1; i++) {
+          const p = pathArr[i];
+          path.push(p);
+          path.push("/");
+        }
 
-
-          const pathArr = file.webkitRelativePath.split("/");
-          const len = pathArr.length;
-          let path = [];
-          for (let i = 0; i < len-1; i++) {
-              const p = pathArr[i];
-              path.push(p);
-              path.push("/");
-          }
+        
+        let relativePath = path.join("");
           
-          let relativePath = path.join("");
           
-          // ******* IMPORTANT ***********
-          if (!pathToId[relativePath]) {
-  
-              const req = await fetch(`${apiUrl}/savePath`, {
-                  method: "POST",
-                  headers: {
-                      "Content-Type": "application/json",
-                  },
-                  credentials: "include",
-                  body: JSON.stringify({ relativePath: relativePath }),
-              });
-              const res = await req.json();
+        // ******* IMPORTANT ***********
+        if (!pathToId[relativePath]) {
 
-              pathToId[relativePath] = res.parentId;
+            const req = await fetch(`${apiUrl}/savePath`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                credentials: "include",
+                body: JSON.stringify({ relativePath: relativePath }),
+            });
+            const res = await req.json();
 
-          }
+            pathToId[relativePath] = res.parentId;
 
-          // const req = await fetch(`${apiUrl}/checkFileStatus`, {
-          //   method: "POST",
-          //   credentials: "include",
-          //   headers: {
-          //     "Content-Type" : "application/json"
-          //   },
-          //   body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
-          // });  
+        }
 
-          // const fileStatus = await req.json();
+        // const req = await fetch(`${apiUrl}/checkFileStatus`, {
+        //   method: "POST",
+        //   credentials: "include",
+        //   headers: {
+        //     "Content-Type" : "application/json"
+        //   },
+        //   body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
+        // });  
+
+        // const fileStatus = await req.json();
+        
+        const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
+        await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
           
-          const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
-          await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
-            
-            
           
+        
 
-          updateJob({
-              jobId: jobId,
-              data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
-          });
-          
-          file = null;
+        updateJob({
+            jobId: jobId,
+            data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
+        });
+        
+        file = null;
       }
 
       
@@ -929,8 +944,6 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     if (selectedFiles && Object.keys(selectedFiles).length > 0) {
       fileIds = Object.keys(selectedFiles);
-    } else if (selectedFile) {
-      fileIds = [selectedFile];
     } else {
       console.warn("No files selected for download.");
       alert("Please select at least one file to download.");
@@ -969,8 +982,6 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     if (selFiles) {
       fileId = selFiles[0];
-    } else if (selectedFile) {
-      fileId = selectedFile;
     }
     
     const file = files.find((f) => f.id === Number.parseInt(fileId));
@@ -989,9 +1000,7 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     let filesToDelete = [];
     
-    if (selectedFile) {
-      filesToDelete = [selectedFile];
-    } else if (selectedFiles) {
+    if (selectedFiles) {
       for (const key of Object.keys(selectedFiles)) {
         filesToDelete.push(Number.parseInt(key));
       }
@@ -1012,6 +1021,48 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     setFileContextWindow({visible: false, x: 0, y: 0});
     
+  };
+  const handleCut = () => {
+    console.log("Inside Cut");
+    
+  };
+  const handleCopy = () => {
+    let filesToCopy = null;
+    if (selectedFiles) {
+      filesToCopy = Object.keys(selectedFiles)
+    }
+
+    setFilesCopied(filesToCopy);
+    
+    setSelectedFiles(null);
+    setFileContextWindow({visible: false, x:0, y:0});
+    
+  };
+  const handlePaste = async () => {
+    
+    let pathId = null;
+
+    if (rightClickSelectedFile) {
+      pathId = rightClickSelectedFile;
+    } else if (folderId) {
+      pathId = folderId;
+    }
+    
+    const req = await fetch(`${apiUrl}/paste`, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      credentials: "include",
+      body: JSON.stringify({files: filesCopied, path: pathId})
+    });
+
+    if (!req.ok) {
+      const error = await req.json();
+      alert(error.message);
+    }
+
+    
+    setFileContextWindow({visible: false, x:0, y:0});
+
   };
 
   return (
@@ -1041,7 +1092,7 @@ export default function Content({ fileOptions, setFileOptions }) {
                     <FileName 
                     file-name-id={file.id} 
                     style={
-                    {backgroundColor: (file.id === selectedFile || (selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
+                    {backgroundColor: ((selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
                     (file.id === highlight.fileId && highlight.shouldHighlight) ? "rgba(102, 51, 153, 0.2)" : "transparent"}
                     }>
                     {file.name}
@@ -1049,6 +1100,7 @@ export default function Content({ fileOptions, setFileOptions }) {
                     :
                     <TextArea 
                     text-area-id={file.id}
+                    onMouseDownCapture={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()} 
                     onDoubleClick={(e) => e.stopPropagation()}
                     onContextMenu={(e) => e.stopPropagation()}
@@ -1069,8 +1121,11 @@ export default function Content({ fileOptions, setFileOptions }) {
             handleDownload={handleDownload}
             handleRename={handleRename}
             handleDelete={handleDelete}
-            selectedFile={selectedFile}
             selectedFiles={selectedFiles}
+            handleCut={handleCut}
+            handleCopy={handleCopy}
+            handlePaste={handlePaste}
+            filesCopied={filesCopied}
           />
           }
           </FolderContainer>
@@ -1167,16 +1222,20 @@ const ClickableP = styled.p`
   }
 `
 
-function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, selectedFile }) {
+function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied }) {
 
   const { x, y } = fileContextWindow;
 
   return (
     <FileContextWindow x={x} y={y} data-context-window="true" >
       <ClickableP onClick={handleDownload}>Download</ClickableP>
-      <ClickableP>Copy</ClickableP>
-      {((selectedFiles && Object.keys(selectedFiles).length === 1) || selectedFile) && <ClickableP onClick={handleRename}>Rename</ClickableP>}
+      <ClickableP onClick={handleCut}>Cut</ClickableP>
+      <ClickableP onClick={handleCopy}>Copy</ClickableP>
+      {(filesCopied && filesCopied.length > 0) && <ClickableP onClick={handlePaste}>Paste</ClickableP>}
+      {((selectedFiles && Object.keys(selectedFiles).length === 1)) && <ClickableP onClick={handleRename}>Rename</ClickableP>}
       <ClickableP onClick={handleDelete}>Delete</ClickableP>
     </FileContextWindow>
   );
 };
+
+

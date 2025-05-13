@@ -2,7 +2,7 @@ const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
 const { findUserById, findUserByUsername, registerUser, 
   queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
-  renameFile, deleteFile } = require("../prisma/queries");
+  renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb } = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -334,6 +334,97 @@ const download = async (req, res) => {
 
 };
 
+const isDescendantOrSelf = async (potentialDescendantId, potentialAncestorId) => {
+  if (potentialDescendantId === potentialAncestorId) {
+      return true;
+  }
+
+  let currentId = potentialDescendantId;
+  const visitedIds = new Set();
+
+  while (currentId !== null && currentId !== undefined) {
+      if (visitedIds.has(currentId)) {
+          console.error(`Cyclic parentage detected for ID: ${currentId}`);
+          return false;
+      }
+      visitedIds.add(currentId);
+
+      const file = await getFileById(currentId);
+
+      if (!file || file.parentId === null || file.parentId === undefined) {
+          return false;
+      }
+
+      if (file.parentId === potentialAncestorId) {
+          return true;
+      }
+
+      currentId = file.parentId;
+  }
+  return false;
+};
+
+const paste = async (req, res) => {
+  const body = req.body;
+  const user = res.locals.currentUser;
+
+  const orgPath = path.join(uploadPath, String(user.id));
+  
+  const dest = await getFullPaths([body.path], orgPath); 
+
+  if (dest.length === 0) {
+      return res.status(400).json({ message: "Destination path doesn't exist or is not accessible." });
+  }
+  if (dest[0].type === 'FILE') {
+      return res.status(400).json({ message: "Cannot paste into a file. Destination must be a folder." });
+  }
+
+  const destinationFolderId = Number.parseInt(body.path);
+
+  for (const fileIdStr of body.files) {
+      const sourceFileId = Number.parseInt(fileIdStr);
+      let fileToCopy = await getFileById(sourceFileId); 
+
+      if (!fileToCopy) {
+          console.error(`File with ID ${sourceFileId} not found.`);
+          return res.status(404).json({ message: `File with ID ${sourceFileId} not found.` }); 
+      }
+
+
+      if (fileToCopy.type === "FOLDER") {
+          if (await isDescendantOrSelf(destinationFolderId, sourceFileId)) {
+              const errorMessage = `Cannot paste folder '${fileToCopy.name}' into itself or one of its own subfolders.`;
+              console.error(errorMessage + ` (Source ID: ${sourceFileId}, Target Parent ID: ${destinationFolderId})`);
+              return res.status(400).json({ message: errorMessage });
+          }
+      }
+
+      try {
+
+          await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
+          
+          const srcFileFullPaths = await getFullPaths([sourceFileId], orgPath);
+          if (srcFileFullPaths.length === 0) {
+              console.error(`Could not resolve source path for file ID ${sourceFileId}`);
+
+              return res.status(500).json({message: `Error processing file ${fileToCopy.name}: Source path not found.`});
+          }
+          const srcItemFileSystemPath = srcFileFullPaths[0].path;
+          const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
+
+
+          fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
+          
+      } catch (error) {
+          console.error(`Error pasting file '${fileToCopy.name}' (ID: ${sourceFileId}):`, error);
+
+          return res.status(500).json({ message: `Failed to paste file '${fileToCopy.name}': ${error.message}` });
+      }
+  }
+  
+  return res.status(200).json({ message: "Files pasted successfully." });
+};
+
 // const uploadFile = [upload.single('file_upload'), async (req, res) => {
 
 // }];
@@ -426,5 +517,6 @@ module.exports = {
     checkFileStatus,
     download,
     rename,
-    deleteFiles
+    deleteFiles,
+    paste
 }

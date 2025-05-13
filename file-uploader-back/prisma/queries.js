@@ -132,6 +132,20 @@ const saveRegularFileToDb = async (obj, user) => {
     
 };
 
+const folderExists = async (folderName, parentId, userId) => {
+
+    const folder = await prisma.file.findFirst({
+        where: {
+            name: folderName,
+            userId: userId,
+            parentId: parentId,
+            type: "FOLDER"
+        }
+    });
+
+    return folder;
+};
+
 const fileExists = async (fileName, parentId, userId) => {
 
     const file = await prisma.file.findFirst({
@@ -167,7 +181,6 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
     const file = await fileExists(fileName, parentId, user.id);
 
     if (!file) {
-        // console.log(fileName);
         
         await prisma.file.create({
             data: {
@@ -200,12 +213,57 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
 
 };
 
+const saveCopyToDb = async (file, parentId, destPath, user) => {
+
+    const fileId = Number.parseInt(file.id);
+
+    if (file.type === "FOLDER") {
+        if (await folderExists(file.name, parentId, user.id)) {
+            throw new Error("Folder already exists");
+        }
+    } else {
+        if (await fileExists(file.name, parentId, user.id)) {
+            throw new Error("File already exists");
+        }
+    }
+
+    let originalChildren = [];
+    if (file.type === "FOLDER") {
+        originalChildren = await prisma.file.findMany({
+            where: {
+                parentId: fileId
+            }
+        });
+    }
+
+    const copiedFile = await prisma.file.create({
+        data: {
+            name: file.name,
+            type: file.type,
+            user: { connect: { id: user.id } },
+            ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+            chunkStart: file.chunkStart,
+            chunkEnd: file.chunkEnd,
+        }
+    });
+
+
+    if (file.type === "FOLDER") {
+        for (const childFile of originalChildren) {
+            await saveCopyToDb(childFile, copiedFile.id, destPath, user);
+        }
+    }
+
+};
+
+
+
 const getFullPaths = async (fileIds, orgPath) => {
     
     const res = [];
 
     for (let id of fileIds) {
-        const temp = await getPath(id, 0);
+        const temp = id ? await getPath(id, 0) : {path: "/", type: "FOLDER", name: ""};
         
         const path = `${orgPath}${temp.path}`;
         const type = temp.type;
@@ -286,7 +344,9 @@ module.exports = {
     registerUser,
     getFiles,
     fileStatus,
+    getFileById,
     saveOrUpdateChunkedFileToDb,
+    saveCopyToDb,
     saveRegularFileToDb,
     queryFilesByParent,
     saveFolderStructure,
