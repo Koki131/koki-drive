@@ -11,6 +11,7 @@ import menuDown from './assets/images/menu-down.svg';
 import close from './assets/images/close.svg';
 import pause from './assets/images/pause.svg';
 import play from './assets/images/play.svg';
+import { useAuth } from './AuthProvider';
 
 
 const ContentContainer = styled.div`
@@ -28,8 +29,14 @@ const Files = styled.div`
   width: 100%;
   height: calc(100vh - 3vw);
   position: relative;
-  color: white;
-  background-color: #0000004a;
+  ${props => props.displayMode && `
+    background-color: #0000004a;
+    color: white;
+  `}
+  ${props => !props.displayMode && `
+    background-color: #ffffff;
+    color: black;
+  `}
   -webkit-user-select: none;
   -ms-user-select: none;
   user-select: none; 
@@ -77,17 +84,29 @@ const ProgressContainer = styled.div`
   flex-direction: column;
   max-height: calc(100vh - 5vw);
   overflow-y: auto;
+  box-shadow: rgba(0, 0, 0, 0.16) 0px 1px 4px;
 `
 const MinimizeContainer = styled.div`
-  background-color: #2b2b2b;
+  ${props => props.displayMode && `
+    background-color: #2b2b2b;
+  `};
+  ${props => !props.displayMode && `
+    background-color: #dedede;
+  `};
   width: 100%;
 `
 const Progress = styled.div`
   width: 100%;
-  background-color: #252424;
+  ${props => props.displayMode && `
+    background-color: #2b2b2b;
+    color: white;
+  `};
+  ${props => !props.displayMode && `
+    background-color: #ffffff;
+    color: black;
+  `};
   display: flex;
   flex-direction: column;
-  color: white;
 `
 const ProgressHeader = styled.div`
   border-top: 1px solid rgba(254, 254, 254, 0.2);
@@ -134,16 +153,28 @@ const Loader = styled.div`
   border-radius: 50%;
   animation: ${spin} 1s linear infinite;
 `
-const Pause = styled.img`
+const Pause = styled.svg`
   width: 15px;
   height: 15px;
   margin-right: 5px;
+  ${props => props.displayMode && `
+    fill: #a0ea1a;
+  `};
+  ${props => !props.displayMode && `
+    fill: #9028f9;
+  `};
   cursor: pointer;
 `
-const Close = styled.img`
+const Close = styled.svg`
   width: 15px;
   height: 15px;
   margin-right: 5px;
+  ${props => props.displayMode && `
+    fill: #a0ea1a;
+  `};
+  ${props => !props.displayMode && `
+    fill: #9028f9;
+  `};
   cursor: pointer;
 `
 
@@ -170,7 +201,12 @@ const ContentSize = styled.div`
 const StyledBar = styled.div`
   width: 80%;
   height: 10%;
-  background-color: grey;
+  ${props => props.displayMode && `
+    background-color: grey;
+  `}
+  ${props => !props.displayMode && `
+    background-color: #dedede;
+  `}
   position: relative;
   margin-left: 2%;
 
@@ -213,7 +249,6 @@ const apiUrl = import.meta.env.VITE_API_URL;
 export default function Content({ fileOptions, setFileOptions }) {
 
   const navigate = useNavigate();
-  const fileContainerRef = useRef(null);
   const { folderId } = useParams();
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState([]);
@@ -230,6 +265,8 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [shouldRename, setShouldRename] = useState(-1);
   const [newName, setNewName] = useState("");
   const [filesCopied, setFilesCopied] = useState([]);
+  const { displayMode } = useAuth();
+  const fileContainerRef = useRef(null);
   const jobsRef = useRef(jobs);
 
   useEffect(() => {
@@ -356,7 +393,6 @@ export default function Content({ fileOptions, setFileOptions }) {
     const x = e.clientX;
     const y = e.clientY;
 
-    console.log(fileContextWindow, selectedFiles);
     if (!fileContextWindow.visible) {
       if (!selectedFiles || Object.keys(selectedFiles).length === 0) {
     
@@ -1070,7 +1106,7 @@ export default function Content({ fileOptions, setFileOptions }) {
       <Sidebar 
         fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
-      <Files ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
+      <Files displayMode={displayMode} ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
           <p>Loading files...</p>
         ) : 
@@ -1134,7 +1170,7 @@ export default function Content({ fileOptions, setFileOptions }) {
       
       </Files>
       {Object.keys(jobs).length > 0 && <ProgressComp 
-          minimize={minimize} menuUp={menuUp} menuDown={menuDown} handleMinimize={handleMinimize} jobs={jobs} handleClose={handleClose} handlePause={handlePause}
+          displayMode={displayMode} minimize={minimize} menuUp={menuUp} menuDown={menuDown} handleMinimize={handleMinimize} jobs={jobs} handleClose={handleClose} handlePause={handlePause}
       />
       }
     </ContentContainer>
@@ -1142,14 +1178,14 @@ export default function Content({ fileOptions, setFileOptions }) {
 }
 
 
-function ProgressComp({ minimize, menuUp, menuDown, handleMinimize, jobs, handleClose, handlePause }) {
+function ProgressComp({ displayMode, minimize, menuUp, menuDown, handleMinimize, jobs, handleClose, handlePause }) {
 
 
   
   return (
     <ProgressContainer>
-      <MinimizeContainer>
-        <Minimize onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
+      <MinimizeContainer displayMode={displayMode}>
+        <Minimize displayMode={displayMode} onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
       </MinimizeContainer>
       {
         Object.keys(jobs).map((jobId) => {
@@ -1157,17 +1193,26 @@ function ProgressComp({ minimize, menuUp, menuDown, handleMinimize, jobs, handle
           const job = jobs[jobId];
 
           return (
-          !minimize && <Progress key={jobId}>
+          !minimize && <Progress displayMode={displayMode} key={jobId}>
             <ProgressHeader>
               <ContentSize>{job.action !== "download" ? "Uploading " : "Downloading "}{`(${job.name})`}</ContentSize>
               <RightContainer>
-                <Loader></Loader>
-                <Pause onClick={() => handlePause(job)} src={job.pause ? play : pause}></Pause>
-                <Close onClick={() => handleClose(job)} src={close}></Close>
+                <Loader displayMode={displayMode}></Loader>
+                <Pause xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#a0ea1a" displayMode={displayMode} onClick={() => handlePause(job)}>
+                  {
+                  !job.pause ?
+                  <path d="M14,19H18V5H14M6,19H10V5H6V19Z" />
+                  :
+                  <path d="M8,5.14V19.14L19,12.14L8,5.14Z" />
+                  }
+                </Pause>
+                <Close xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#a0ea1a" displayMode={displayMode} onClick={() => handleClose(job)} src={close}>
+                  <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+                </Close>
               </RightContainer>
             </ProgressHeader>
             <ProgressBar>
-              {(job.action !== "download") && <StyledBar>
+              {(job.action !== "download") && <StyledBar displayMode={displayMode}>
                 <div className='styled-bar-fill' style={{width: `${job.data.percentage}%`}}></div>
               </StyledBar>}
               <StyledFileCount>

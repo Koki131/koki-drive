@@ -5,6 +5,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [displayMode, setDisplayMode] = useState(false);
 
     useEffect(() => {
         const checkAuth = async () => {
@@ -29,6 +30,12 @@ export function AuthProvider({ children }) {
         setUser(user);
     };
 
+    const toggle = () => {
+        console.log("TEST");
+        
+        setDisplayMode((displayMode) => !displayMode);
+    };
+
     const logout = async () => {
         try {
             await fetch("http://localhost:3000/logout", {
@@ -48,7 +55,7 @@ export function AuthProvider({ children }) {
     };
     
     return (
-        <AuthContext.Provider value={{ user, login, logout }}>
+        <AuthContext.Provider value={{ user, login, logout, toggle, displayMode }}>
             {!loading && children}
         </AuthContext.Provider>
     );

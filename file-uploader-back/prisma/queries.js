@@ -65,6 +65,14 @@ const queryFilesByParent = async (userId, parent) => {
     const parentId = parent ? Number.parseInt(parent) : null;
 
     const res = await prisma.file.findMany({
+        orderBy: [
+            {
+                type: 'desc',
+            },
+            {
+                name: 'asc',
+            }
+        ],
         where: {
             userId: userId,
             parentId: parentId,
