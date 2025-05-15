@@ -9,8 +9,12 @@ import zipImage from './assets/images/folder-zip.svg';
 import menuUp from './assets/images/menu-up.svg';
 import menuDown from './assets/images/menu-down.svg';
 import close from './assets/images/close.svg';
-import pause from './assets/images/pause.svg';
-import play from './assets/images/play.svg';
+import copyImg from "./assets/images/copy.svg";
+import cutImg from "./assets/images/cut.svg";
+import renameImg from "./assets/images/rename.svg";
+import downloadImg from "./assets/images/download.svg";
+import pasteImg from "./assets/images/paste.svg";
+import deleteImg from "./assets/images/delete.svg";
 import { useAuth } from './AuthProvider';
 
 
@@ -22,7 +26,7 @@ const ContentContainer = styled.div`
 
 const Files = styled.div`
   flex: 1;
-  margin-left: 5vw;
+  margin-left: 10vw;
   margin-top: 3vw;
   overflow-y: auto;
   overflow-x: hidden;
@@ -600,7 +604,6 @@ export default function Content({ fileOptions, setFileOptions }) {
       console.log(e.target)
   };
 
-
   let rollingSpeed = 1;
 
   const updateRollingSpeed = (chunkSizeBytes, durationMs, cameFrom) => {
@@ -631,7 +634,6 @@ export default function Content({ fileOptions, setFileOptions }) {
       return 20 * 1024 * 1024;
     }
   };
-
 
   const fetchWithTimeout = async (url, options = {}, timeout, jobId) => {
       const controller = new AbortController();
@@ -707,7 +709,6 @@ export default function Content({ fileOptions, setFileOptions }) {
       }
     }
   };
-  
 
   const waitForResume = async (jobId) => {
 
@@ -753,7 +754,8 @@ export default function Content({ fileOptions, setFileOptions }) {
       e.preventDefault();
       
       const form = e.target;
-
+      console.log(form);
+      
       if (form[0].files.length <= 0) return;
 
       let pathToId = {};
@@ -835,7 +837,6 @@ export default function Content({ fileOptions, setFileOptions }) {
       
       removeJob(jobId);
   };
-
 
   const uploadInChunks = async (file, relativePath, jobId, currSize, totalSize, metaData) => {
     
@@ -945,6 +946,7 @@ export default function Content({ fileOptions, setFileOptions }) {
     });
 
   };
+
   const handlePause = (job) => {
 
     setJobs(prevJobs => {
@@ -1058,10 +1060,12 @@ export default function Content({ fileOptions, setFileOptions }) {
     setFileContextWindow({visible: false, x: 0, y: 0});
     
   };
+
   const handleCut = () => {
     console.log("Inside Cut");
     
   };
+  
   const handleCopy = () => {
     let filesToCopy = null;
     if (selectedFiles) {
@@ -1074,6 +1078,7 @@ export default function Content({ fileOptions, setFileOptions }) {
     setFileContextWindow({visible: false, x:0, y:0});
     
   };
+  
   const handlePaste = async () => {
     
     let pathId = null;
@@ -1162,6 +1167,7 @@ export default function Content({ fileOptions, setFileOptions }) {
             handleCopy={handleCopy}
             handlePaste={handlePaste}
             filesCopied={filesCopied}
+            displayMode={displayMode}
           />
           }
           </FolderContainer>
@@ -1247,38 +1253,75 @@ const FileContextWindow = styled.div`
   position: fixed; 
   top: ${props => props.y}px;
   left: ${props => props.x}px;
-  width: 100px;
-  min-height: 150px;
-  background-color: #252424;
+  background-color: ${props => props.displayMode ? "#252424" : "#dedede"};
+  color: ${props => props.displayMode ? "white" : "black"};
   box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
   z-index: 1000;
-  padding: 5px;
   display: flex;
+  padding: 0.3vw;
   flex-direction: column;
+  border-radius: 15px;
+  font-size: 0.7vw;
 `;
 
-const ClickableP = styled.p`
-  color: white;
-  cursor: pointer;
-  transition: 0.3s ease;
-
-  &:hover {
-    color: rgba(102, 51, 153, 0.9);;
-  }
+const ContextItemWrapper = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5vw;
+  padding: 0.5vw;
+`
+const StyledContextImg = styled.img`
+  width: 1.3vw;
 `
 
-function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied }) {
+const ClickableP = styled.p`
+  cursor: pointer;
+`
+
+function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, displayMode }) {
 
   const { x, y } = fileContextWindow;
 
   return (
-    <FileContextWindow x={x} y={y} data-context-window="true" >
-      <ClickableP onClick={handleDownload}>Download</ClickableP>
-      <ClickableP onClick={handleCut}>Cut</ClickableP>
-      <ClickableP onClick={handleCopy}>Copy</ClickableP>
-      {(filesCopied && filesCopied.length > 0) && <ClickableP onClick={handlePaste}>Paste</ClickableP>}
-      {((selectedFiles && Object.keys(selectedFiles).length === 1)) && <ClickableP onClick={handleRename}>Rename</ClickableP>}
-      <ClickableP onClick={handleDelete}>Delete</ClickableP>
+    <FileContextWindow displayMode={displayMode} x={x} y={y} data-context-window="true" >
+
+      <ContextItemWrapper>
+        <StyledContextImg src={downloadImg}></StyledContextImg>
+        <ClickableP onClick={handleDownload}>Download</ClickableP>
+      </ContextItemWrapper>
+
+      <ContextItemWrapper>
+        <StyledContextImg src={cutImg}></StyledContextImg>
+        <ClickableP onClick={handleCut}>Cut</ClickableP>
+      </ContextItemWrapper>
+
+      <ContextItemWrapper>
+        <StyledContextImg src={copyImg}></StyledContextImg>
+        <ClickableP onClick={handleCopy}>Copy</ClickableP>
+      </ContextItemWrapper>
+
+      {
+      (filesCopied && filesCopied.length > 0) && 
+      <ContextItemWrapper>
+        <StyledContextImg src={pasteImg}></StyledContextImg>
+        <ClickableP onClick={handlePaste}>Paste</ClickableP>
+      </ContextItemWrapper>
+      }
+
+      {
+      ((selectedFiles && Object.keys(selectedFiles).length === 1)) && 
+      <ContextItemWrapper>
+        <StyledContextImg src={renameImg}></StyledContextImg>
+        <ClickableP onClick={handleRename}>Rename</ClickableP>
+      </ContextItemWrapper>
+      }
+
+      <ContextItemWrapper>
+        <StyledContextImg src={deleteImg}></StyledContextImg>
+        <ClickableP onClick={handleDelete}>Delete</ClickableP>
+      </ContextItemWrapper>
+
     </FileContextWindow>
   );
 };

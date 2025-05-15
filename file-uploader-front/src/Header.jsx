@@ -17,7 +17,7 @@ const StyledContainer = styled.div`
     justify-content: space-between;
     align-items: center;
     color: ${props => (props.displayMode ? "white" : "black")};
-    z-index: 1000;
+    z-index: 999;
     box-sizing: border-box;
     padding-left: 1vw;
     padding-right: 1vw;
@@ -28,7 +28,7 @@ const StyledContainer = styled.div`
         left: 5vw;
         height: 3px; 
         width: 100%;
-        box-shadow: ${props => (props.displayMode ? 'rgba(17, 17, 26, 0.5) 0px 3px 0px' : 'rgba(100, 100, 100, 0.2) 0px 2px 0px')};
+        /* box-shadow: ${props => (props.displayMode ? 'rgba(17, 17, 26, 0.5) 0px 3px 0px' : 'rgba(100, 100, 100, 0.2) 0px 2px 0px')}; */
         z-index: -1;
     }
 `;
@@ -61,6 +61,8 @@ const StyledInput = styled.input`
     border-radius: 34px;
     width: 100%;
     box-sizing: border-box;
+    display: flex;
+    align-items: center;
     font-size: 0.7vw;
     z-index: 0;
 
@@ -232,7 +234,7 @@ export default function Header() {
                     </StyledSearchImgContainer>
                     <StyledInput 
                         type="text" 
-                        placeholder="Find file" 
+                        placeholder="Search" 
                         displayMode={displayMode} 
                     />
                     <StyledClear displayMode={displayMode} onClick={clearInput}>

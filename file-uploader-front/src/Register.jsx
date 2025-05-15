@@ -4,7 +4,8 @@ import { useAuth } from "./AuthProvider";
 import styled from "styled-components";
 import { LoginRegisterToggle } from "./LoginRegisterToggle";
 import logo from "./assets/images/logo.png";
-
+import usernameImg from "./assets/images/username.svg";
+import passwordImg from "./assets/images/password.svg";
 const LoginContainer = styled.div`
     background-color: ${props => (props.displayMode ? "#252424" : "#dedede")};
     height: 100vh;
@@ -40,23 +41,27 @@ const LoginBoxContainer = styled.div`
     flex-direction: column;
 `
 const StyledLogo = styled.img`
-    width: 3vw;
+    width: min(3vw, 6vh);
     position: absolute;
     top: 0;
     left: 0;
     margin: 20px;
 `
 
-const StyledInput = styled.input`
+const StyledInputWrapper = styled.div`
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
     outline: none;
-    padding: 0.5vw 2vw 0.5vw 3vw;
     border: 1px solid transparent; 
     border-radius: 34px;
     width: 70%;
     margin: 0.5vw;
     box-sizing: border-box;
-    font-size: 0.7vw;
+    font-size: min(0.7vw, 1.4vh);
     z-index: 0;
+    padding: 0.5vw 2vw 0.5vw 2vw;
 
 
     ${props => !props.displayMode && `
@@ -77,6 +82,23 @@ const StyledInput = styled.input`
         }
     `}
 `
+
+const StyledInputImg = styled.img`
+    width: min(1vw, 2vh);
+    position: absolute;
+    left: 0;
+    margin: 1vw;
+`
+
+const StyledInput = styled.input`
+    outline: none;
+    border: none;
+    width: 90%;
+    margin: 0.2vw;
+    box-sizing: border-box;
+    font-size: min(0.7vw, 1.4vh);
+    z-index: 0;
+`
 const InputDiv = styled.div`
     display: flex;
     align-items: center;
@@ -92,7 +114,7 @@ const StyledButton = styled.button`
     border: none;
     outline: none;
     background-color: #9028f9;
-    font-size: 0.7vw;
+    font-size: min(0.7vw, 1.4vh);
     color: white;
 
     &:hover {
@@ -104,14 +126,14 @@ const StyledP = styled.p`
     position: absolute;
     bottom: 0;
     margin: 20px;
-    font-size: 0.8vw;
+    font-size: min(0.8vw, 1.6vh);
 `
 const StyledLink = styled(Link)`
     text-decoration: none;
     color: #9028f9;
 `
 const StyledHeader = styled.h3`
-    font-size: 1vw;
+    font-size: min(1vw, 2vh);
 `
 export default function Register() {
 
@@ -173,9 +195,18 @@ export default function Register() {
                     <LoginInnerBox>
                         <InputDiv>
                             <StyledHeader>Sign up</StyledHeader>
-                            <StyledInput displayMode={displayMode} type="text" name="username" onChange={(e) => handleUsername(e)} value={username} placeholder="Username"/>
-                            <StyledInput displayMode={displayMode} type="password" name="password" onChange={(e) => handlePassword(e)} value={password} placeholder="Password"/>
-                            <StyledInput displayMode={displayMode} type="password" name="matchingPassword" onChange={(e) => handleMatchingPassword(e)} value={matchingPassword} placeholder="Matching Password"/>
+                            <StyledInputWrapper>
+                                <StyledInputImg src={usernameImg}></StyledInputImg>
+                                <StyledInput displayMode={displayMode} type="text" name="username" onChange={(e) => handleUsername(e)} value={username} placeholder="Username"/>
+                            </StyledInputWrapper>
+                            <StyledInputWrapper>
+                                <StyledInputImg src={passwordImg}></StyledInputImg>
+                                <StyledInput displayMode={displayMode} type="password" name="password" onChange={(e) => handlePassword(e)} value={password} placeholder="Password"/>
+                            </StyledInputWrapper>
+                            <StyledInputWrapper>
+                                <StyledInputImg src={passwordImg}></StyledInputImg>
+                                <StyledInput displayMode={displayMode} type="password" name="matchingPassword" onChange={(e) => handleMatchingPassword(e)} value={matchingPassword} placeholder="Matching Password"/>
+                            </StyledInputWrapper>
                             <StyledButton displayMode={displayMode} onClick={(e) => handleRegister(e)}>Register</StyledButton>
                         </InputDiv>
                         <StyledP>Already have an account? <StyledLink to={"/login"}>Sign in</StyledLink> </StyledP>
