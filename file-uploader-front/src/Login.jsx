@@ -8,7 +8,7 @@ import usernameImg from "./assets/images/username.svg";
 import passwordImg from "./assets/images/password.svg";
 
 const LoginContainer = styled.div`
-    background-color: ${props => (props.displayMode ? "#252424" : "#dedede")};
+    background-color: ${props => (props.displayMode ? "#252424" : "#f5f5f5")};
     height: 100vh;
     display: flex;
     align-items: center;
@@ -62,7 +62,7 @@ const StyledInputWrapper = styled.div`
     box-sizing: border-box;
     font-size: min(0.7vw, 1.4vh);
     z-index: 0;
-    padding: 0.5vw 2vw 0.5vw 2vw;
+    padding: 0.5vw 0 0.5vw 2vw;
 
 
     ${props => !props.displayMode && `

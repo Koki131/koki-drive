@@ -230,17 +230,92 @@ const StyledFileCount = styled.div`
   margin-right: 2%;
 `
 const TextArea = styled.textarea`
-    width: 70px;
-    resize: none;
-    background: none;
-    color: white;
-    border: none;
-    overflow: hidden;
-    font-size: 11px;
-    
-    &:focus {
-      outline: none;
-    }
+  width: 70px;
+  resize: none;
+  background: none;
+  color: white;
+  border: none;
+  overflow: hidden;
+  font-size: 11px;
+  
+  &:focus {
+    outline: none;
+  }
+`
+const NewFolderWindow = styled.div`
+  display: grid;
+  grid-template-rows: repeat(1fr, auto);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  width: 20vw;
+  height: 30vh;
+  background-color: ${props => !props.displayMode ? "#f5f5f5" : "#252424"};
+  border-radius: 34px;
+  padding: 1vw;
+  z-index: 1;
+`
+const NewFolderHeaderContainer = styled.div`
+  display: flex;
+  align-items: center;
+  color: ${props => !props.displayMode ? "black" : "white"};
+`
+const NewFolderInputContainer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`
+const NewFolderSaveContainer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: end;
+`
+const StyledFolderInput = styled.input`
+  outline: none;
+  padding: 0.5vw 0vw 0.5vw 1vw;
+  border: 1px solid transparent; 
+  border-radius: 15px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  font-size: 0.7vw;
+  z-index: 0;
+
+  &:focus {
+    border: 1px solid #9028f9;
+  }
+
+
+  ${props => !props.displayMode && `
+      background-color: #ffffff;
+      color: black;
+      border-color: #ccc;
+      &::placeholder {
+          color: #888;
+      }
+  `}
+
+  ${props => props.displayMode && `
+      background-color: #3a3a3a;
+      color: white;
+      border-color: #555;
+      &::placeholder {
+          color: #bbb;
+      }
+  `}
+`
+const StyledFolderSaveButton = styled.p`
+
+  color: #9028f9;
+  transition: 0.3s ease;
+  &:hover {
+    cursor: pointer;
+    transform: scale(1.07);
+  }
+
 `
 
 
@@ -269,9 +344,12 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [shouldRename, setShouldRename] = useState(-1);
   const [newName, setNewName] = useState("");
   const [filesCopied, setFilesCopied] = useState([]);
+  const [filesCut, setFilesCut] = useState([]);
+  const [newFolder, setNewFolder] = useState(false);
   const { displayMode } = useAuth();
   const fileContainerRef = useRef(null);
   const jobsRef = useRef(jobs);
+  const folderNameRef = useRef(null);
 
   useEffect(() => {
     jobsRef.current = jobs;
@@ -338,7 +416,7 @@ export default function Content({ fileOptions, setFileOptions }) {
 
     getFiles();
     
-  }, [folderId, updateFiles]);
+  }, [folderId, newFolder, updateFiles]);
 
 
   const handleClick = (file) => {
@@ -425,6 +503,8 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   const handleMouseDown = async (e) => {
     const target = e.target;
+
+    setNewFolder(false);
 
     if (!target.closest('[data-context-window="true"]') && target.closest('[file-image-id]') === null && target.closest('[file-name-id]') === null) {
       setRightClickSelectedFile(null);
@@ -597,7 +677,9 @@ export default function Content({ fileOptions, setFileOptions }) {
     setMinimize(!minimize);
   };
 
-  const handleNewFolder = () => {};
+  const handleNewFolder = () => {
+    setNewFolder(true);    
+  };
     
   const uploadFile = (e) => {
 
@@ -1062,7 +1144,15 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
   const handleCut = () => {
-    console.log("Inside Cut");
+    let filesToCut = null;
+    if (selectedFiles) {
+      filesToCut = Object.keys(selectedFiles)
+    }
+    setFilesCut(filesToCut);
+    
+    setFilesCopied([]);
+    setSelectedFiles(null);
+    setFileContextWindow({visible: false, x:0, y:0});
     
   };
   
@@ -1071,9 +1161,9 @@ export default function Content({ fileOptions, setFileOptions }) {
     if (selectedFiles) {
       filesToCopy = Object.keys(selectedFiles)
     }
-
     setFilesCopied(filesToCopy);
     
+    setFilesCut([]);
     setSelectedFiles(null);
     setFileContextWindow({visible: false, x:0, y:0});
     
@@ -1089,11 +1179,19 @@ export default function Content({ fileOptions, setFileOptions }) {
       pathId = folderId;
     }
     
+    let type = null;
+
+    if (filesCopied.length > 0) {
+      type = "copy";
+    }  else if (filesCut.length > 0) {
+      type = "cut";
+    }
+
     const req = await fetch(`${apiUrl}/paste`, {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       credentials: "include",
-      body: JSON.stringify({files: filesCopied, path: pathId})
+      body: JSON.stringify({files: filesCopied, path: pathId, operationType: type})
     });
 
     if (!req.ok) {
@@ -1106,8 +1204,42 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   };
 
+  const createNewFolder = async () => {
+
+    const folderName = folderNameRef.current ? folderNameRef.current.value : "";
+
+    const req = await fetch(`${apiUrl}/createNewFolder`, {
+      method: "POST",
+      headers: {"Content-type":"application/json"},
+      credentials: "include",
+      body: JSON.stringify({parentId: folderId, folderName: folderName})
+    });
+
+    if (!req.ok) {
+      const error = await req.json();
+      alert(error.message);
+    } else {
+      setNewFolder(false);
+    }
+  };
+
   return (
     <ContentContainer>
+      {newFolder && <NewFolderWindow displayMode={displayMode}>
+        <NewFolderHeaderContainer displayMode={displayMode}>
+          <h4>Create Folder</h4>
+        </NewFolderHeaderContainer>
+        <NewFolderInputContainer>
+          <StyledFolderInput ref={folderNameRef} placeholder='Folder name' displayMode={displayMode}>
+
+          </StyledFolderInput>
+        </NewFolderInputContainer>
+        <NewFolderSaveContainer>
+          <StyledFolderSaveButton onClick={createNewFolder}>
+            Create
+          </StyledFolderSaveButton>
+        </NewFolderSaveContainer>
+      </NewFolderWindow>}
       <Sidebar 
         fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
@@ -1167,6 +1299,7 @@ export default function Content({ fileOptions, setFileOptions }) {
             handleCopy={handleCopy}
             handlePaste={handlePaste}
             filesCopied={filesCopied}
+            filesCut={filesCut}
             displayMode={displayMode}
           />
           }
@@ -1279,7 +1412,7 @@ const ClickableP = styled.p`
   cursor: pointer;
 `
 
-function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, displayMode }) {
+function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, filesCut, displayMode }) {
 
   const { x, y } = fileContextWindow;
 
@@ -1302,7 +1435,7 @@ function ContextWindow({ fileContextWindow, handleDownload, handleRename, handle
       </ContextItemWrapper>
 
       {
-      (filesCopied && filesCopied.length > 0) && 
+      ((filesCopied && filesCopied.length > 0) || (filesCut && filesCut.length > 0)) && 
       <ContextItemWrapper>
         <StyledContextImg src={pasteImg}></StyledContextImg>
         <ClickableP onClick={handlePaste}>Paste</ClickableP>

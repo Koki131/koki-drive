@@ -2,7 +2,8 @@ const bcrypt = require("bcryptjs");
 const { body, validationResult } = require("express-validator");
 const { findUserById, findUserByUsername, registerUser, 
   queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
-  renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb } = require("../prisma/queries");
+  renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb, 
+  saveFolder} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -133,6 +134,24 @@ const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
 
   await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
   
+};
+
+const createNewFolder = async (req, res) => {
+
+  const payload = req.body;
+  const parentId = payload.parentId ? Number.parseInt(payload.parentId) : null;
+  const folderName = payload.folderName;
+  const user = res.locals.currentUser;
+
+  try {
+    await saveFolder(parentId, folderName, user);
+  } catch (error) {
+    
+    return res.status(400).json({message: error.message});
+  }
+  
+  return res.status(200).json({message: "Folder saved successfully"});
+
 };
 
 const rename = async (req, res) => {
@@ -367,10 +386,14 @@ const isDescendantOrSelf = async (potentialDescendantId, potentialAncestorId) =>
 const paste = async (req, res) => {
   const body = req.body;
   const user = res.locals.currentUser;
+  const operationType = body.operationType;
 
+  
+  
   const orgPath = path.join(uploadPath, String(user.id));
   
   const dest = await getFullPaths([body.path], orgPath); 
+
 
   if (dest.length === 0) {
       return res.status(400).json({ message: "Destination path doesn't exist or is not accessible." });
@@ -379,12 +402,16 @@ const paste = async (req, res) => {
       return res.status(400).json({ message: "Cannot paste into a file. Destination must be a folder." });
   }
 
-  const destinationFolderId = Number.parseInt(body.path);
+  let destinationFolderId = null;
+
+  if (body.path) {
+    destinationFolderId = Number.parseInt(body.path);
+  }
 
   for (const fileIdStr of body.files) {
       const sourceFileId = Number.parseInt(fileIdStr);
       let fileToCopy = await getFileById(sourceFileId); 
-
+      
       if (!fileToCopy) {
           console.error(`File with ID ${sourceFileId} not found.`);
           return res.status(404).json({ message: `File with ID ${sourceFileId} not found.` }); 
@@ -402,7 +429,7 @@ const paste = async (req, res) => {
       try {
 
           await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
-          
+
           const srcFileFullPaths = await getFullPaths([sourceFileId], orgPath);
           if (srcFileFullPaths.length === 0) {
               console.error(`Could not resolve source path for file ID ${sourceFileId}`);
@@ -518,5 +545,6 @@ module.exports = {
     download,
     rename,
     deleteFiles,
-    paste
+    paste,
+    createNewFolder
 }

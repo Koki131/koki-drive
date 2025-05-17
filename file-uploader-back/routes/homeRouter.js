@@ -1,5 +1,5 @@
 const Router = require("express");
-const { register, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste } = require("../controllers/homeController");
+const { register, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste, createNewFolder } = require("../controllers/homeController");
 const passport = require("passport");
 const bodyParser = require("body-parser");
 
@@ -26,6 +26,7 @@ homeRouter.put("/rename", rename);
 homeRouter.post("/delete", deleteFiles);
 homeRouter.post("/paste", paste);
 homeRouter.post("/checkFileStatus", checkFileStatus);
+homeRouter.post("/createNewFolder", createNewFolder)
 homeRouter.get("/getFilesByParent", getFilesByParent);
 homeRouter.get("/isUserAuthenticated", isAuth);
 

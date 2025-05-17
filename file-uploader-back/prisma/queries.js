@@ -83,6 +83,26 @@ const queryFilesByParent = async (userId, parent) => {
 
 };
 
+const saveFolder = async (parentId, folderName, user) => {
+
+    if (folderName.trim() === "") {
+        throw new Error("Folder name cannot be empty");
+    }
+    if (await folderExists(folderName, parentId, user.id)) {
+        throw new Error("Folder with that name already exists");
+    }
+
+    await prisma.file.create({
+        data: {
+            userId: user.id,
+            name: folderName,
+            parentId: parentId,
+            type: "FOLDER"
+        }
+    });
+
+};
+
 const saveFolderStructure = async (filePath, user) => {
     
     let parentId = null;
@@ -255,6 +275,7 @@ const saveCopyToDb = async (file, parentId, destPath, user) => {
         }
     });
 
+    
 
     if (file.type === "FOLDER") {
         for (const childFile of originalChildren) {
@@ -358,6 +379,7 @@ module.exports = {
     saveRegularFileToDb,
     queryFilesByParent,
     saveFolderStructure,
+    saveFolder,
     getFullPaths,
     renameFile,
     deleteFile

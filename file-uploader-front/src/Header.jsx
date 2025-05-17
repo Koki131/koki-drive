@@ -12,7 +12,7 @@ const StyledContainer = styled.div`
     top: 0;
     left: 0;
     height: 3vw; 
-    background-color: ${props => (props.displayMode ? "#252424" : "#dedede")};
+    background-color: ${props => (props.displayMode ? "#252424" : "#f5f5f5")};
     display: flex;
     justify-content: space-between;
     align-items: center;
