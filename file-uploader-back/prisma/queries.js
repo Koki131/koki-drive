@@ -103,8 +103,8 @@ const saveFolder = async (parentId, folderName, user) => {
 
 };
 
-const saveFolderStructure = async (filePath, user) => {
-    
+const saveFolderStructure = async (filePath, user, destFolderId) => {
+
     let parentId = null;
     
     const folders = filePath.split("/");
@@ -380,6 +380,7 @@ module.exports = {
     queryFilesByParent,
     saveFolderStructure,
     saveFolder,
+    getPath,
     getFullPaths,
     renameFile,
     deleteFile

@@ -349,11 +349,16 @@ export default function Content({ fileOptions, setFileOptions }) {
   const { displayMode } = useAuth();
   const fileContainerRef = useRef(null);
   const jobsRef = useRef(jobs);
+  const folderIdRef = useRef(folderId);
   const folderNameRef = useRef(null);
 
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
+
+  useEffect(() => {
+    folderIdRef.current = folderId
+  }, [folderId]);
 
   useEffect(() => {
     const handleMouseUp = (e) => {
@@ -836,14 +841,14 @@ export default function Content({ fileOptions, setFileOptions }) {
       e.preventDefault();
       
       const form = e.target;
-      console.log(form);
       
       if (form[0].files.length <= 0) return;
 
       let pathToId = {};
+      let idToPath = {};
       let currSize = [0];
 
-      setFileOptions((prev) => !prev);
+      // setFileOptions((prev) => !prev);
 
       const jobId = Date.now();
 
@@ -855,7 +860,18 @@ export default function Content({ fileOptions, setFileOptions }) {
       
       addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
 
+      const parentPathReq = await fetch(`${apiUrl}/getParentPath`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "include",
+        body: JSON.stringify({folderId: folderId})
+      }); 
       
+      const tempParentPath = await parentPathReq.json();
+
+      const parentPath = tempParentPath.parentPath ? tempParentPath.parentPath : "";
+      
+
       for (let file of form[0].files) {
         
         
@@ -863,20 +879,20 @@ export default function Content({ fileOptions, setFileOptions }) {
         const len = pathArr.length;
         
         let path = [];
-        
+        path.push(parentPath);
         for (let i = 0; i < len-1; i++) {
           const p = pathArr[i];
           path.push(p);
           path.push("/");
         }
 
-        
         let relativePath = path.join("");
           
           
         // ******* IMPORTANT ***********
         if (!pathToId[relativePath]) {
-
+            console.log(relativePath);
+            
             const req = await fetch(`${apiUrl}/savePath`, {
                 method: "POST",
                 headers: {
@@ -886,7 +902,8 @@ export default function Content({ fileOptions, setFileOptions }) {
                 body: JSON.stringify({ relativePath: relativePath }),
             });
             const res = await req.json();
-
+            setUpdateFiles((prev) => !prev);
+            idToPath[res.parentId] = relativePath;
             pathToId[relativePath] = res.parentId;
 
         }
@@ -905,7 +922,10 @@ export default function Content({ fileOptions, setFileOptions }) {
         const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
         await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
           
-          
+        // console.log(pathToId[relativePath]);
+        if (folderId && idToPath[folderId]) {
+          setUpdateFiles((prev) => !prev);
+        }
         
 
         updateJob({
@@ -916,7 +936,6 @@ export default function Content({ fileOptions, setFileOptions }) {
         file = null;
       }
 
-      
       removeJob(jobId);
   };
 

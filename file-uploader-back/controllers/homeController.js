@@ -3,7 +3,8 @@ const { body, validationResult } = require("express-validator");
 const { findUserById, findUserByUsername, registerUser, 
   queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
   renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb, 
-  saveFolder} = require("../prisma/queries");
+  saveFolder,
+  getPath} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -18,7 +19,29 @@ const savePath = async (req, res) => {
 
   const parentId = await saveFolderStructure(req.body.relativePath, res.locals.currentUser);
         
-  res.status(200).json({ parentId: parentId });
+  return res.status(200).json({ parentId: parentId });
+};
+
+const getParentPath = async (req, res) => {
+  const parentId = req.body.folderId;
+
+  if (parentId) {
+    const tempPath = await getPath(parentId, 0);
+    const p = tempPath.path.split("/");
+
+    let finalParentPath = "";
+    for (const name of p) {
+      if (name !== "") {
+        finalParentPath += path.join(name, "/");
+      }
+    }
+    
+    
+    return res.status(200).json({parentPath: finalParentPath});
+  }
+  
+  return res.status(200).json({message: "Success"});
+
 };
 
 const checkFileStatus = async (req, res) => {
@@ -26,7 +49,7 @@ const checkFileStatus = async (req, res) => {
   const data = req.body;
   
   const status = await fileStatus(data.parentId, res.locals.currentUser, data.fileName);
-  res.status(200).json(status);
+  return res.status(200).json(status);
 
 
 };
@@ -48,7 +71,8 @@ const uploadChunk = (req, res) => {
 
     fs.mkdirSync(finalPath, { recursive: true });
     const finalFilePath = path.join(finalPath, fileName);
-
+    console.log(finalPath);
+    
 
     const buffers = [];
     file.on('data', (data) => buffers.push(data));
@@ -539,6 +563,7 @@ module.exports = {
     logout,
     uploadChunk,
     savePath,
+    getParentPath,
     isAuth,
     getFilesByParent,
     checkFileStatus,
