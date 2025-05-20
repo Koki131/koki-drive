@@ -4,7 +4,8 @@ const { findUserById, findUserByUsername, registerUser,
   queryFilesByParent, saveFolderStructure, saveOrUpdateChunkedFileToDb, fileStatus, getFullPaths, 
   renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb, 
   saveFolder,
-  getPath} = require("../prisma/queries");
+  getPath,
+  saveCutToDb} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -71,8 +72,6 @@ const uploadChunk = (req, res) => {
 
     fs.mkdirSync(finalPath, { recursive: true });
     const finalFilePath = path.join(finalPath, fileName);
-    console.log(finalPath);
-    
 
     const buffers = [];
     file.on('data', (data) => buffers.push(data));
@@ -407,6 +406,10 @@ const isDescendantOrSelf = async (potentialDescendantId, potentialAncestorId) =>
   return false;
 };
 
+const sleep = async (ms) => {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
+
 const paste = async (req, res) => {
   const body = req.body;
   const user = res.locals.currentUser;
@@ -417,8 +420,7 @@ const paste = async (req, res) => {
   const orgPath = path.join(uploadPath, String(user.id));
   
   const dest = await getFullPaths([body.path], orgPath); 
-
-
+  
   if (dest.length === 0) {
       return res.status(400).json({ message: "Destination path doesn't exist or is not accessible." });
   }
@@ -452,19 +454,35 @@ const paste = async (req, res) => {
 
       try {
 
-          await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
-
+          // strategy for copy or cut
           const srcFileFullPaths = await getFullPaths([sourceFileId], orgPath);
+          
           if (srcFileFullPaths.length === 0) {
               console.error(`Could not resolve source path for file ID ${sourceFileId}`);
 
               return res.status(500).json({message: `Error processing file ${fileToCopy.name}: Source path not found.`});
           }
+
+          if (operationType === "copy") {
+            await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
+          } else if (operationType === "cut") {
+            await saveCutToDb(fileToCopy, destinationFolderId);
+          } else {
+            return res.status(500).json({message: "Either copy or cut allowed"});
+          }
+
           const srcItemFileSystemPath = srcFileFullPaths[0].path;
           const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
 
+          // rename instead of cpSync for cut
 
-          fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
+          if (operationType === "copy") {
+            fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
+          } else {
+            console.log(srcItemFileSystemPath, destItemFileSystemPath);
+            
+            fs.rename(srcItemFileSystemPath, destItemFileSystemPath, () => {});
+          }
           
       } catch (error) {
           console.error(`Error pasting file '${fileToCopy.name}' (ID: ${sourceFileId}):`, error);

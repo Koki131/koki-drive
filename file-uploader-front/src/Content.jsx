@@ -15,6 +15,7 @@ import renameImg from "./assets/images/rename.svg";
 import downloadImg from "./assets/images/download.svg";
 import pasteImg from "./assets/images/paste.svg";
 import deleteImg from "./assets/images/delete.svg";
+import newImg from "./assets/images/new.svg";
 import { useAuth } from './AuthProvider';
 
 
@@ -202,13 +203,18 @@ const ContentSize = styled.div`
   margin-left: 5px;
 `
 
+const bounceAnimation = keyframes`
+  0% { left: 0; }
+  50% { left: 70%; }
+  100% { left: 0; }
+`;
+
 const StyledBar = styled.div`
   width: 80%;
   height: 10%;
-  ${props => props.displayMode && `
+  ${props => props.displayMode ? `
     background-color: grey;
-  `}
-  ${props => !props.displayMode && `
+  ` : `
     background-color: #dedede;
   `}
   position: relative;
@@ -220,11 +226,21 @@ const StyledBar = styled.div`
     height: 100%;
     transition: 0.1s ease;
   }
+  
+  .styled-bar-fill-bounce {
+    position: absolute;
+    background-color: #7F00FF;
+    height: 100%;
+    transition: 0.3s ease;
+    width: 30%;
+    animation: ${bounceAnimation} 2s infinite;
+  }
+  
   .styled-upload-header {
     position: absolute;
     top: 0;
   }
-`
+`;
 const StyledFileCount = styled.div`
   font-size: 0.7vw;
   margin-right: 2%;
@@ -346,6 +362,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [filesCopied, setFilesCopied] = useState([]);
   const [filesCut, setFilesCut] = useState([]);
   const [newFolder, setNewFolder] = useState(false);
+  const [typeClicked, setTypeClicked] = useState("");
   const { displayMode } = useAuth();
   const fileContainerRef = useRef(null);
   const jobsRef = useRef(jobs);
@@ -449,6 +466,11 @@ export default function Content({ fileOptions, setFileOptions }) {
     e.preventDefault();
     e.stopPropagation();
 
+    const target = e.target.closest("[data-file-id]");
+
+    const clickedFileType = target ? target.getAttribute("data-file-type") : null;
+    
+    
     setRightClickSelectedFile(fileId);
   
     if (shouldRename !== -1) {
@@ -472,23 +494,25 @@ export default function Content({ fileOptions, setFileOptions }) {
     
     setShouldRename(-1);
 
-    if (!fileId || (selectedFiles && !selectedFiles[fileId])) {
-      setSelectedFiles(null);
-    }
     
-    
+    setTypeClicked({type: clickedFileType, id: fileId});
+
     const x = e.clientX;
     const y = e.clientY;
-
+    
     if (!fileContextWindow.visible) {
       if (!selectedFiles || Object.keys(selectedFiles).length === 0) {
-    
         const temp = {};
         if (fileId) {
           temp[fileId] = {fileId: fileId};
         }
         setSelectedFiles(temp);
       }
+    }
+    
+    if (!fileId || (selectedFiles && !selectedFiles[fileId])) {   
+      setTypeClicked(null);
+      setSelectedFiles(null);
     }
 
     setFileContextWindow((prev) => {
@@ -514,15 +538,14 @@ export default function Content({ fileOptions, setFileOptions }) {
     if (!target.closest('[data-context-window="true"]') && target.closest('[file-image-id]') === null && target.closest('[file-name-id]') === null) {
       setRightClickSelectedFile(null);
     }
+
     if (e.button !== 0) return;
     if (!fileContainerRef.current) return;
     if (target.closest('[data-context-window="true"]')) return;
-
+    
     
     if (shouldRename !== -1 && !target.closest('[text-area-id]') && newName.trim() !== "") {
-      // rename in database
-      // rename in filesystem
-      
+
       await fetch(`${apiUrl}/rename`, {
         method: "PUT",
         headers: {"Content-Type":"application/json"},
@@ -543,18 +566,21 @@ export default function Content({ fileOptions, setFileOptions }) {
       
     }
     
+    
     if (target.closest('[file-image-id]') || target.closest('[file-name-id]')) {
       return;
     }
     
-    setFileContextWindow({visible: false, x: 0, y: 0});
     setSelectedFiles(null);
     setFileOptions(false);    
+    setFileContextWindow({visible: false, x: 0, y: 0});
 
+    
     const containerRect = fileContainerRef.current.getBoundingClientRect();
 
     const startX = Math.round(e.clientX - containerRect.left);
     const startY = Math.round((e.clientY + fileContainerRef.current.scrollTop) - containerRect.top);
+    
     
     if (shouldRename === -1) {
       setContainerRect(containerRect);
@@ -683,6 +709,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
 
   const handleNewFolder = () => {
+    setFileContextWindow({visible: false, x: 0, y:0});
     setNewFolder(true);    
   };
     
@@ -891,8 +918,7 @@ export default function Content({ fileOptions, setFileOptions }) {
           
         // ******* IMPORTANT ***********
         if (!pathToId[relativePath]) {
-            console.log(relativePath);
-            
+
             const req = await fetch(`${apiUrl}/savePath`, {
                 method: "POST",
                 headers: {
@@ -1176,6 +1202,7 @@ export default function Content({ fileOptions, setFileOptions }) {
   };
   
   const handleCopy = () => {
+
     let filesToCopy = null;
     if (selectedFiles) {
       filesToCopy = Object.keys(selectedFiles)
@@ -1191,7 +1218,9 @@ export default function Content({ fileOptions, setFileOptions }) {
   const handlePaste = async () => {
     
     let pathId = null;
-
+    const jobId = Date.now();
+    
+    
     if (rightClickSelectedFile) {
       pathId = rightClickSelectedFile;
     } else if (folderId) {
@@ -1199,39 +1228,50 @@ export default function Content({ fileOptions, setFileOptions }) {
     }
     
     let type = null;
-
+    let totalFiles = 0;
+    
     if (filesCopied.length > 0) {
       type = "copy";
+      totalFiles = filesCopied.length;
     }  else if (filesCut.length > 0) {
       type = "cut";
+      totalFiles = filesCut.length;
+
     }
+
+    addJob({jobId: jobId, action: type, data: {totalFiles: totalFiles}});
+    
+    setFileContextWindow({visible: false, x:0, y:0});
 
     const req = await fetch(`${apiUrl}/paste`, {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       credentials: "include",
-      body: JSON.stringify({files: filesCopied, path: pathId, operationType: type})
+      body: JSON.stringify({files: type && type === "copy" ? filesCopied : filesCut, path: pathId, operationType: type})
     });
+    
+    setUpdateFiles(prev => !prev);
 
     if (!req.ok) {
       const error = await req.json();
       alert(error.message);
     }
-
     
-    setFileContextWindow({visible: false, x:0, y:0});
-
+    removeJob(jobId);
+    
   };
 
   const createNewFolder = async () => {
 
+    const tempFolderId = (typeClicked && typeClicked.type === "FOLDER") ? typeClicked.id : folderId;
+    
     const folderName = folderNameRef.current ? folderNameRef.current.value : "";
 
     const req = await fetch(`${apiUrl}/createNewFolder`, {
       method: "POST",
       headers: {"Content-type":"application/json"},
       credentials: "include",
-      body: JSON.stringify({parentId: folderId, folderName: folderName})
+      body: JSON.stringify({parentId: tempFolderId, folderName: folderName})
     });
 
     if (!req.ok) {
@@ -1262,7 +1302,7 @@ export default function Content({ fileOptions, setFileOptions }) {
       <Sidebar 
         fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
-      <Files displayMode={displayMode} ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
+      <Files files-context-window="true" displayMode={displayMode} ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
         {loading ? (
           <p>Loading files...</p>
         ) : 
@@ -1271,22 +1311,29 @@ export default function Content({ fileOptions, setFileOptions }) {
               <FileContainer
                 key={file.id}
                 data-file-id={file.id}
+                data-file-type={file.type}
               >
-                <FileTempContainer
+
+                <FileTempContainer>
+                  <FileImage file-image-id={file.id} src={file.type === "FOLDER" ? folderImage : fileImage} 
+                  alt="file or folder image"
                   onClick={(e) => handleSelected(e, file.id)} 
                   onContextMenu={(e) => handleRightClick(e, file.id)}
                   onDoubleClick={() => handleClick(file)}
                   onMouseEnter={() => handleHighlight(file.id, true)} onMouseLeave={() => handleHighlight(file.id, false)}  
-                >
-                  <FileImage file-image-id={file.id} src={file.type === "FOLDER" ? folderImage : fileImage} 
-                  alt="file or folder image"/>
+                  />
                   {shouldRename !== file.id ? 
                     <FileName 
                     file-name-id={file.id} 
                     style={
                     {backgroundColor: ((selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
                     (file.id === highlight.fileId && highlight.shouldHighlight) ? "rgba(102, 51, 153, 0.2)" : "transparent"}
-                    }>
+                    }
+                    onClick={(e) => handleSelected(e, file.id)} 
+                    onContextMenu={(e) => handleRightClick(e, file.id)}
+                    onDoubleClick={() => handleClick(file)}
+                    onMouseEnter={() => handleHighlight(file.id, true)} onMouseLeave={() => handleHighlight(file.id, false)}  
+                    >
                     {file.name}
                     </FileName>
                     :
@@ -1310,6 +1357,7 @@ export default function Content({ fileOptions, setFileOptions }) {
             }}
             onMouseDownCapture={(e) => e.stopPropagation()}
             fileContextWindow={fileContextWindow} 
+            handleNewFolder={handleNewFolder}
             handleDownload={handleDownload}
             handleRename={handleRename}
             handleDelete={handleDelete}
@@ -1320,6 +1368,7 @@ export default function Content({ fileOptions, setFileOptions }) {
             filesCopied={filesCopied}
             filesCut={filesCut}
             displayMode={displayMode}
+            typeClicked={typeClicked}
           />
           }
           </FolderContainer>
@@ -1349,6 +1398,24 @@ function ProgressComp({ displayMode, minimize, menuUp, menuDown, handleMinimize,
         Object.keys(jobs).map((jobId) => {
           
           const job = jobs[jobId];
+
+          if (job.action === "cut" || job.action === "copy") {
+            return (
+              !minimize && <Progress displayMode={displayMode} key={jobId}>
+              <ProgressHeader>
+                <ContentSize>{job.action !== "cut" ? "Copying " : "Moving "}{`(${job.data.totalFiles})`}</ContentSize>
+                <RightContainer>
+                  <Loader displayMode={displayMode}></Loader>
+                </RightContainer>
+              </ProgressHeader>
+              <ProgressBar>
+                <StyledBar displayMode={displayMode}>
+                  <div className='styled-bar-fill-bounce'></div>
+                </StyledBar>
+              </ProgressBar>
+            </Progress>
+            );
+          }
 
           return (
           !minimize && <Progress displayMode={displayMode} key={jobId}>
@@ -1431,30 +1498,42 @@ const ClickableP = styled.p`
   cursor: pointer;
 `
 
-function ContextWindow({ fileContextWindow, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, filesCut, displayMode }) {
+function ContextWindow({ fileContextWindow, handleNewFolder, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, filesCut, displayMode, typeClicked }) {
 
   const { x, y } = fileContextWindow;
 
   return (
     <FileContextWindow displayMode={displayMode} x={x} y={y} data-context-window="true" >
+      {
+      (!typeClicked || typeClicked.type === "FOLDER") && <ContextItemWrapper>
+        <StyledContextImg src={newImg}></StyledContextImg>
+        <ClickableP onClick={handleNewFolder}>New Folder</ClickableP>
+      </ContextItemWrapper>
+      }
 
-      <ContextItemWrapper>
+      {
+      typeClicked && <ContextItemWrapper>
         <StyledContextImg src={downloadImg}></StyledContextImg>
         <ClickableP onClick={handleDownload}>Download</ClickableP>
       </ContextItemWrapper>
+      }
 
-      <ContextItemWrapper>
+      {
+      typeClicked && <ContextItemWrapper>
         <StyledContextImg src={cutImg}></StyledContextImg>
         <ClickableP onClick={handleCut}>Cut</ClickableP>
       </ContextItemWrapper>
+      }
 
-      <ContextItemWrapper>
+      {
+      typeClicked && <ContextItemWrapper>
         <StyledContextImg src={copyImg}></StyledContextImg>
         <ClickableP onClick={handleCopy}>Copy</ClickableP>
       </ContextItemWrapper>
-
+      
+      }
       {
-      ((filesCopied && filesCopied.length > 0) || (filesCut && filesCut.length > 0)) && 
+      ((!typeClicked || typeClicked.type === "FOLDER") && ((filesCopied && filesCopied.length > 0) || (filesCut && filesCut.length > 0))) && 
       <ContextItemWrapper>
         <StyledContextImg src={pasteImg}></StyledContextImg>
         <ClickableP onClick={handlePaste}>Paste</ClickableP>
@@ -1462,18 +1541,19 @@ function ContextWindow({ fileContextWindow, handleDownload, handleRename, handle
       }
 
       {
-      ((selectedFiles && Object.keys(selectedFiles).length === 1)) && 
+      (typeClicked && (selectedFiles && Object.keys(selectedFiles).length === 1)) && 
       <ContextItemWrapper>
         <StyledContextImg src={renameImg}></StyledContextImg>
         <ClickableP onClick={handleRename}>Rename</ClickableP>
       </ContextItemWrapper>
       }
 
-      <ContextItemWrapper>
+      {
+      typeClicked && <ContextItemWrapper>
         <StyledContextImg src={deleteImg}></StyledContextImg>
         <ClickableP onClick={handleDelete}>Delete</ClickableP>
       </ContextItemWrapper>
-
+      }
     </FileContextWindow>
   );
 };

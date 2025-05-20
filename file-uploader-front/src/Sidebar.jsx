@@ -1,5 +1,4 @@
 import styled from "styled-components";
-import newImg from "./assets/images/new.svg";
 import fileImg from "./assets/images/file-outline.svg";
 import folderImg from "./assets/images/folder-outline.svg";
 import { useAuth } from "./AuthProvider";

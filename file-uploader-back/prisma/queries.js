@@ -285,6 +285,19 @@ const saveCopyToDb = async (file, parentId, destPath, user) => {
 
 };
 
+const saveCutToDb = async (fileToCopy, destinationFolderId) => {
+
+    await prisma.file.update({
+        where: {
+            id: fileToCopy.id
+        },
+        data: {
+            parentId: destinationFolderId
+        }
+    })
+    
+    
+};
 
 
 const getFullPaths = async (fileIds, orgPath) => {
@@ -376,6 +389,7 @@ module.exports = {
     getFileById,
     saveOrUpdateChunkedFileToDb,
     saveCopyToDb,
+    saveCutToDb,
     saveRegularFileToDb,
     queryFilesByParent,
     saveFolderStructure,
