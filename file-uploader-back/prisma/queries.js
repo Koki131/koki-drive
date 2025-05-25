@@ -299,6 +299,56 @@ const saveCutToDb = async (fileToCopy, destinationFolderId) => {
     
 };
 
+const getSearchResult = async (ws, searchTerm, parentId, user, visited = {}) => {
+
+    const allFilesOnLevel = await prisma.file.findMany({
+        where: {
+            userId: user.id,
+            parentId: parentId
+        }
+    });
+
+    const matchingFilesOnLevel = await prisma.file.findMany({
+        where: {
+            userId: user.id,
+            parentId: parentId,
+            name: {
+                startsWith: searchTerm,
+                mode: 'insensitive'
+            },
+        },
+        orderBy: [
+            { type: "desc" },
+            { name: "asc" }
+        ]
+    });
+    let currFiles = [];
+
+    for (const file of matchingFilesOnLevel) {
+        if (!visited[file.id]) {
+            currFiles.push(file);
+            visited[file.id] = true;
+        }
+
+        if (currFiles.length >= 30) {
+            ws.send(JSON.stringify({ type: 'SEARCH_RESULTS', payload: currFiles }));
+            currFiles = [];
+        }
+    }
+
+    if (currFiles.length > 0) {
+        ws.send(JSON.stringify({ type: 'SEARCH_RESULTS', payload: currFiles }));
+    } 
+
+    for (const file of allFilesOnLevel) {
+        if (file.type === "FOLDER" && !visited[file.id]) {
+            await getSearchResult(ws, searchTerm, file.id, user, visited);
+        }
+    }
+
+
+};
+
 
 const getFullPaths = async (fileIds, orgPath) => {
     
@@ -397,5 +447,6 @@ module.exports = {
     getPath,
     getFullPaths,
     renameFile,
-    deleteFile
+    deleteFile,
+    getSearchResult
 }

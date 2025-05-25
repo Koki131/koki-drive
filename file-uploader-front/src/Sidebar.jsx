@@ -91,19 +91,14 @@ const NewFolderContainer = styled.div`
 `
 
 
-export default function Sidebar({ fileOptions, setFileOptions, uploadFile, uploadFolder, handleNewFolder }) {
+export default function Sidebar({ uploadFile, uploadFolder, handleNewFolder }) {
 
     const { displayMode } = useAuth();
 
-    const handleNew = (e) => {
-        e.stopPropagation();        
-        setFileOptions((fileOptions) => !fileOptions);
-    };
 
     return (
         <StyledNewButtonContainer displayMode={displayMode}>
             
-            {/* <StyledNewButtonImg onClick={handleNew} src={newImg}></StyledNewButtonImg>  */}
             {<UploadOptions 
             displayMode={displayMode} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
             />}

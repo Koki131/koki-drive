@@ -48,6 +48,7 @@ const Files = styled.div`
 `;
 const FolderContainer = styled.div`
   display: grid;
+  position: relative;
   grid-template-columns: repeat(auto-fill, 100px);
 `;
 const FileContainer = styled.div`
@@ -146,6 +147,7 @@ const spin = keyframes`
   }
 
 `
+
 
 const Loader = styled.div`
   color: black;
@@ -334,19 +336,16 @@ const StyledFolderSaveButton = styled.p`
 
 `
 
-
 let grid = {};
 let width = 100;
 let height = 100;
 let fileCoords = {};
 const apiUrl = import.meta.env.VITE_API_URL;
 
-export default function Content({ fileOptions, setFileOptions }) {
+export default function Content({ files, setFiles, isLoading, setIsLoading, updateFiles, setUpdateFiles }) {
 
   const navigate = useNavigate();
   const { folderId } = useParams();
-  const [loading, setLoading] = useState(true);
-  const [files, setFiles] = useState([]);
   const [highlight, setHighlight] = useState({fileId: -2, highlight: false});
   const [selectedFiles, setSelectedFiles] = useState(null);
   const [rightClickSelectedFile, setRightClickSelectedFile] = useState(null);
@@ -356,7 +355,6 @@ export default function Content({ fileOptions, setFileOptions }) {
   const [minimize, setMinimize] = useState(false);
   const [fileContextWindow, setFileContextWindow] = useState({visible: false, x: 0, y: 0});
   const [jobs, setJobs] = useState({});
-  const [updateFiles, setUpdateFiles] = useState(false);
   const [shouldRename, setShouldRename] = useState(-1);
   const [newName, setNewName] = useState("");
   const [filesCopied, setFilesCopied] = useState([]);
@@ -424,7 +422,7 @@ export default function Content({ fileOptions, setFileOptions }) {
           });
           const response = await request.json();
           if (!isEqual(response.files, files)) {
-            setLoading(true);
+            setIsLoading(true);
             setFiles(response.files);
           } 
           
@@ -432,7 +430,7 @@ export default function Content({ fileOptions, setFileOptions }) {
           console.error(e);
           
         } finally {
-          setLoading(false);
+          setIsLoading(false);
         }
     };
 
@@ -571,8 +569,7 @@ export default function Content({ fileOptions, setFileOptions }) {
       return;
     }
     
-    setSelectedFiles(null);
-    setFileOptions(false);    
+    setSelectedFiles(null);  
     setFileContextWindow({visible: false, x: 0, y: 0});
 
     
@@ -619,7 +616,7 @@ export default function Content({ fileOptions, setFileOptions }) {
 
   const getFileRects = () => {
     
-    if (!loading && fileContainerRef.current) {
+    if (!isLoading && fileContainerRef.current) {
       
       const containerRect = fileContainerRef.current.getBoundingClientRect();
       const fileElements = fileContainerRef.current.querySelectorAll('[data-file-id]');
@@ -875,7 +872,6 @@ export default function Content({ fileOptions, setFileOptions }) {
       let idToPath = {};
       let currSize = [0];
 
-      // setFileOptions((prev) => !prev);
 
       const jobId = Date.now();
 
@@ -1300,12 +1296,9 @@ export default function Content({ fileOptions, setFileOptions }) {
         </NewFolderSaveContainer>
       </NewFolderWindow>}
       <Sidebar 
-        fileOptions={fileOptions} setFileOptions={setFileOptions} uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
+        uploadFile={uploadFile} uploadFolder={uploadFolder} handleNewFolder={handleNewFolder}
       />
       <Files files-context-window="true" displayMode={displayMode} ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
-        {loading ? (
-          <p>Loading files...</p>
-        ) : 
           <FolderContainer>
             {files.map((file) => (
               <FileContainer
@@ -1372,7 +1365,6 @@ export default function Content({ fileOptions, setFileOptions }) {
           />
           }
           </FolderContainer>
-        }
         <SelectionBox selectionBox={selectionBox}/>
       
       </Files>

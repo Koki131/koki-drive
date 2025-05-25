@@ -13,14 +13,20 @@ const StyledAppContainer = styled.div`
 `;
 
 function App() {
-  const [fileOptions, setFileOptions] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [files, setFiles] = useState([]);
+  const [updateFiles, setUpdateFiles] = useState(false);
 
   return (
-    <StyledAppContainer onClick={() => setFileOptions(false)}>
-      <Header />
+    <StyledAppContainer>
+      <Header files={files} setFiles={setFiles} isLoading={isLoading} setIsLoading={setIsLoading} setUpdateFiles={setUpdateFiles} />
       <Content 
-        fileOptions={fileOptions} 
-        setFileOptions={setFileOptions}
+        files={files}
+        setFiles={setFiles}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+        updateFiles={updateFiles}
+        setUpdateFiles={setUpdateFiles}
       />
     </StyledAppContainer>
   );

@@ -5,7 +5,8 @@ const { findUserById, findUserByUsername, registerUser,
   renameFile, deleteFile, getFileById, saveRegularFileToDb, saveCopyToDb, 
   saveFolder,
   getPath,
-  saveCutToDb} = require("../prisma/queries");
+  saveCutToDb,
+  getSearchResult} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -406,9 +407,6 @@ const isDescendantOrSelf = async (potentialDescendantId, potentialAncestorId) =>
   return false;
 };
 
-const sleep = async (ms) => {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-};
 
 const paste = async (req, res) => {
   const body = req.body;
@@ -528,6 +526,52 @@ const getFilesByParent = async (req, res) => {
 
 
 
+const handleSearchConnection = (ws, req) => {
+  
+  const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'];
+  console.log(`[Search WS Controller] Client connected for /search from ${clientIp}`);
+  
+  ws.on('message', async (messageBuffer) => {
+
+    let parsedMessage;
+
+    try {
+
+      const messageString = messageBuffer.toString();
+      parsedMessage = JSON.parse(messageString);
+      console.log(`[Search WS Controller] Received from ${clientIp}:`, parsedMessage);
+
+      if (parsedMessage.type === 'SEARCH_QUERY') {
+        const searchTerm = (parsedMessage.payload || '').toLowerCase();
+        const folderId = parsedMessage.folderId ? Number.parseInt(parsedMessage.folderId) : {};
+
+
+        await getSearchResult(ws, searchTerm, folderId, req.user);
+
+        ws.send(JSON.stringify({ type: 'SEARCH_COMPLETE', payload: {searchComplete: true} }));
+      } else {
+        console.warn(`[Search WS Controller] Unknown message type from ${clientIp}: ${parsedMessage.type}`);
+        ws.send(JSON.stringify({ type: 'ERROR', payload: 'Unknown message type' }));
+      }
+    } catch (error) {
+      console.error(`[Search WS Controller] Error processing message from ${clientIp}:`, error);
+      ws.send(JSON.stringify({ type: 'ERROR', payload: 'Invalid message format or server error' }));
+    }
+  });
+
+  ws.on('close', (code, reason) => {
+    console.log(`[Search WS Controller] Client ${clientIp} disconnected from /search. Code: ${code}, Reason: ${reason ? reason.toString() : 'N/A'}`);
+  });
+
+  ws.on('error', (error) => {
+    console.error(`[Search WS Controller] WebSocket error for client ${clientIp}:`, error);
+  });
+
+  // ws.send(JSON.stringify({ type: 'CONNECTION_ESTABLISHED', message: 'Connected to search service!' }));
+};
+
+
+
 const register = [validateRegister, async (req, res) => {
 
     const errors = validationResult(req);
@@ -589,5 +633,6 @@ module.exports = {
     rename,
     deleteFiles,
     paste,
-    createNewFolder
+    createNewFolder,
+    handleSearchConnection
 }
