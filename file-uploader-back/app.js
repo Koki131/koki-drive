@@ -11,7 +11,6 @@ const homeRouter = require("./routes/homeRouter");
 const flash = require("flash");
 const cors = require("cors");
 
-const { handleSearchConnection } = require('./controllers/homeController');
 const http = require("http");
 
 const { findUserById, findUserByUsername } = require("./prisma/queries");
@@ -22,7 +21,6 @@ const app = express();
 
 
 const server = http.createServer(app);
-const expressWs = require('express-ws')(app, server);
 
 app.use(cors({
   origin: "http://localhost:5173",
@@ -92,16 +90,7 @@ app.use((req, res, next) => {
     next();
 });
 
-app.ws('/search', (ws, req) => {
 
-  if (!req.user) {
-    console.log('[WebSocket Route /search] Unauthenticated connection. Closing.');
-    ws.send(JSON.stringify({ type: 'ERROR', payload: 'Authentication required' }));
-    ws.close(4001, 'Authentication required'); 
-    return;
-  }
-  handleSearchConnection(ws, req);
-});
 
 app.use("/", homeRouter);
 

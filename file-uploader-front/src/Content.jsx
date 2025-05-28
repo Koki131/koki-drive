@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { isEqual } from 'lodash';
 import styled, { keyframes } from 'styled-components';
@@ -342,7 +342,11 @@ let height = 100;
 let fileCoords = {};
 const apiUrl = import.meta.env.VITE_API_URL;
 
-export default function Content({ files, setFiles, isLoading, setIsLoading, updateFiles, setUpdateFiles }) {
+export default function Content({ 
+  files, setFiles, isLoading, setIsLoading, 
+  updateFiles, setUpdateFiles, fileContainerRef,
+  calculatedInitialTake
+}) {
 
   const navigate = useNavigate();
   const { folderId } = useParams();
@@ -361,8 +365,8 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
   const [filesCut, setFilesCut] = useState([]);
   const [newFolder, setNewFolder] = useState(false);
   const [typeClicked, setTypeClicked] = useState("");
+  const [loadRange, setLoadRange] = useState(null);
   const { displayMode } = useAuth();
-  const fileContainerRef = useRef(null);
   const jobsRef = useRef(jobs);
   const folderIdRef = useRef(folderId);
   const folderNameRef = useRef(null);
@@ -411,18 +415,22 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
 
 
   useEffect(() => {
+    
 
     const getFiles = async () => {
+        console.log("INSIDE GET FILES");
+        
         try {
+          
+          setIsLoading(true);
           const parent = folderId ? folderId : "";
-          const request = await fetch("http://localhost:3000/getFilesByParent?parent=" + parent, {
+          const request = await fetch(`${apiUrl}/getFilesByParent?parent=${parent}&skip=${0}&take=${calculatedInitialTake}`, {
               method: "GET",
               headers: { "Content-Type" : "text/plain"},
-              credentials: 'include'
+              credentials: 'include',
           });
           const response = await request.json();
           if (!isEqual(response.files, files)) {
-            setIsLoading(true);
             setFiles(response.files);
           } 
           
@@ -436,7 +444,49 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
 
     getFiles();
     
-  }, [folderId, newFolder, updateFiles]);
+  }, [folderId, newFolder, updateFiles, calculatedInitialTake]);
+
+
+  const lazyLoadFiles = useCallback(async () => {
+      
+    console.log("TEST");
+    
+    if (!loadRange) {
+        console.log('Search range not initialized, cannot continue search.');
+        return;
+    }
+
+    if (isLoading) { 
+        console.log('Already loading more results, cannot continue search yet.');
+        return;
+    }
+
+    const container = fileContainerRef.current;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const buffer = 5;
+    
+    if (scrollTop + clientHeight >= scrollHeight - buffer) {
+        
+      setLoadRange({skip: loadRange.skip + loadRange.take, take: 30});
+
+    }
+
+  }, [isLoading, setLoadRange]); 
+  
+  useEffect(() => {
+    const currentFileContainer = fileContainerRef.current;
+    if (currentFileContainer && loadRange) { 
+        console.log("Adding scrollend listener. Current searchRange:", loadRange);
+        currentFileContainer.addEventListener("scroll", lazyLoadFiles);
+        
+        return () => {
+            console.log("Removing scrollend listener.");
+            currentFileContainer.removeEventListener("scroll", lazyLoadFiles);
+        };
+    } else {
+         console.log("Scrollend listener not added (no currentFileContainer or loadRange is null).");
+    }
+  }, [lazyLoadFiles, fileContainerRef, loadRange]);
 
 
   const handleClick = (file) => {
@@ -869,7 +919,6 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
       if (form[0].files.length <= 0) return;
 
       let pathToId = {};
-      let idToPath = {};
       let currSize = [0];
 
 
@@ -924,9 +973,13 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
                 body: JSON.stringify({ relativePath: relativePath }),
             });
             const res = await req.json();
-            setUpdateFiles((prev) => !prev);
-            idToPath[res.parentId] = relativePath;
-            pathToId[relativePath] = res.parentId;
+            const { parentId, ultimateParentId } = res.parentIds;
+
+            pathToId[relativePath] = parentId;
+            
+            if (folderId && ultimateParentId === Number.parseInt(folderId)) {
+              setUpdateFiles((prev) => !prev);
+            } 
 
         }
 
@@ -942,10 +995,10 @@ export default function Content({ files, setFiles, isLoading, setIsLoading, upda
         // const fileStatus = await req.json();
         
         const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
-        await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
+         await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
           
-        // console.log(pathToId[relativePath]);
-        if (folderId && idToPath[folderId]) {
+        
+        if (folderId && pathToId[relativePath] === Number.parseInt(folderId)) {
           setUpdateFiles((prev) => !prev);
         }
         

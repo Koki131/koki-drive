@@ -61,10 +61,18 @@ const getFileById = async (id) => {
 
 };
 
-const queryFilesByParent = async (userId, parent) => {
+const queryFilesByParent = async (userId, parent, skip, take) => {
     const parentId = parent ? Number.parseInt(parent) : null;
+    const skipVal = skip ? Number.parseInt(skip) : 0;
+    const takeVal = take ? Number.parseInt(take) : 30;
 
     const res = await prisma.file.findMany({
+        where: {
+            userId: userId,
+            parentId: parentId,
+        },
+        skip: skipVal,
+        take: takeVal,
         orderBy: [
             {
                 type: 'desc',
@@ -73,10 +81,6 @@ const queryFilesByParent = async (userId, parent) => {
                 name: 'asc',
             }
         ],
-        where: {
-            userId: userId,
-            parentId: parentId,
-        }
     });
     
     return res;
@@ -106,12 +110,14 @@ const saveFolder = async (parentId, folderName, user) => {
 const saveFolderStructure = async (filePath, user, destFolderId) => {
 
     let parentId = null;
+    let ultimateParentId = null;
     
     const folders = filePath.split("/");
     
     for (const segment of folders) {
 
         if (segment === '') continue;
+        ultimateParentId = parentId;
 
         let folder = await prisma.file.findFirst({
             where: {
@@ -132,10 +138,11 @@ const saveFolderStructure = async (filePath, user, destFolderId) => {
                 }
             });
         }
-
+        
         parentId = folder.id;
     }
-    return parentId;
+
+    return { parentId: parentId, ultimateParentId: ultimateParentId };
 };
 
 
@@ -204,7 +211,7 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
 
     const parentId = obj.parentId;
     const fileName = obj.fileName;
-
+    
     
     const file = await fileExists(fileName, parentId, user.id);
 
@@ -218,11 +225,12 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
                 parent: parentId ? {connect: {id: parentId}} : {},
                 chunkStart: chunkData.start,
                 chunkEnd: chunkData.end,
+                totalSize: chunkData.fileSize
             }
         });
     } else {
         
-        await prisma.file.update({
+    await prisma.file.update({
 
             where: {
                 id: file.id,
@@ -299,52 +307,43 @@ const saveCutToDb = async (fileToCopy, destinationFolderId) => {
     
 };
 
-const getSearchResult = async (ws, searchTerm, parentId, user, visited = {}) => {
-
-    const allFilesOnLevel = await prisma.file.findMany({
-        where: {
-            userId: user.id,
-            parentId: parentId
+const conditionalPromise = async (parsedMessage) => {
+    console.log("Inside conditionalPromise, parsedMessage.type:", parsedMessage.type); 
+    return new Promise((resolve) => {
+        if (parsedMessage.type !== "PAUSE_SEARCH") {
+            console.log("conditionalPromise: resolving"); 
+            resolve();
+        } else {
+            console.log("conditionalPromise: NOT resolving, will block");
         }
     });
+};
+
+
+const getSearchResult = async (message, user) => {
+
 
     const matchingFilesOnLevel = await prisma.file.findMany({
         where: {
             userId: user.id,
-            parentId: parentId,
             name: {
-                startsWith: searchTerm,
+                startsWith: message.searchTerm,
                 mode: 'insensitive'
             },
         },
+        skip: message.skip,
+        take: message.take,
         orderBy: [
             { type: "desc" },
             { name: "asc" }
         ]
     });
-    let currFiles = [];
+   
+    return matchingFilesOnLevel;
+ 
 
-    for (const file of matchingFilesOnLevel) {
-        if (!visited[file.id]) {
-            currFiles.push(file);
-            visited[file.id] = true;
-        }
-
-        if (currFiles.length >= 30) {
-            ws.send(JSON.stringify({ type: 'SEARCH_RESULTS', payload: currFiles }));
-            currFiles = [];
-        }
-    }
-
-    if (currFiles.length > 0) {
-        ws.send(JSON.stringify({ type: 'SEARCH_RESULTS', payload: currFiles }));
-    } 
-
-    for (const file of allFilesOnLevel) {
-        if (file.type === "FOLDER" && !visited[file.id]) {
-            await getSearchResult(ws, searchTerm, file.id, user, visited);
-        }
-    }
+    
+  
 
 
 };

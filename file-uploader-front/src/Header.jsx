@@ -7,6 +7,7 @@ import styled, { keyframes } from "styled-components";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 
+const apiUrl = import.meta.env.VITE_API_URL;
 
 const StyledContainer = styled.div`
     width: 100%;
@@ -241,132 +242,110 @@ function debounce(func, wait) {
     };
   }
 
-export default function Header({ files, setFiles, isLoading, setIsLoading, setUpdateFiles }) {
+  export default function Header({ 
+    files, setFiles, isLoading, setIsLoading, setUpdateFiles, 
+    fileContainerRef, calculatedInitialTake 
+}) {
+
     const { folderId } = useParams();
-    const { logout, toggle, displayMode } = useAuth(); 
+    const { logout, toggle, displayMode } = useAuth();
     const [searchValue, setSearchValue] = useState("");
-    const [isConnected, setIsConnected] = useState(false);
-    const [isAttemptingConnection, setIsAttemptingConnection] = useState(false);
-    const ws = useRef(null);
+    const [searchRange, setSearchRange] = useState(null); 
 
-    const connectWebSocket = useCallback(() => {
+    
 
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            console.log('WebSocket already open');
-            return;
-        }
-        if (isAttemptingConnection) {
-            console.log('WebSocket connection attempt already in progress.');
-            return;
-        }
-
-        setIsAttemptingConnection(true);
-
-        const wsUrl = `ws://localhost:3000/search`;
-        const socket = new WebSocket(wsUrl);
-        ws.current = socket;
-
-        socket.onopen = () => {
-            console.log('WebSocket connected to /search');
-            setIsConnected(true);
-            setIsAttemptingConnection(false);
-        };
-
-        socket.onmessage = (event) => {
- 
-            try {
-                console.log("Raw WebSocket data:", event.data);
-                const message = JSON.parse(event.data);
-                console.log('Received from WebSocket:', message);
-                if (message.type === 'SEARCH_RESULTS') {
-                    
-                    const receivedFiles = message.payload;
-
-                    setFiles(prev => [...prev, ...receivedFiles]);
-                } else if (message.type === 'ERROR') {
-                    console.error('WebSocket Error from server:', message.payload);
-                } else if (message.type === 'SEARCH_COMPLETE') {
-                    setIsLoading(false);
-                }
-            } catch (error) {
-                console.error('Failed to parse WebSocket message:', error);
-            }
-        };
-
-        socket.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            setIsConnected(false);
-            setIsLoading(false);
-            setIsAttemptingConnection(false);
-        };
-
-        socket.onclose = (event) => {
-            console.log('WebSocket disconnected from /search. Code:', event.code, 'Reason:', event.reason);
-            setIsConnected(false);
-            setIsLoading(false);
-            setIsAttemptingConnection(false);
-
-            if (ws.current === socket) {
-                ws.current = null;
-            }
-        };
-    }, [isAttemptingConnection]);
-
-
-    const disconnectWebSocket = useCallback(() => {
-        if (ws.current) {
-            ws.current.close();
-        }
-    }, [ws]);
-
-    useEffect(() => {
-        return () => {
-            disconnectWebSocket();
-        };
-    }, [disconnectWebSocket]);
-
-
-    const executeSearch = useCallback((query) => {
+    const executeSearch = useCallback(async (query) => {
+      
         if (!query.trim()) {
+            setFiles([]);
+            setSearchRange(null); 
+            setUpdateFiles(prev => !prev);
+            setIsLoading(false); 
             return;
         }
 
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            setFiles([]);
-            setIsLoading(true);
-            ws.current.send(JSON.stringify({ type: 'SEARCH_QUERY', payload: query, folderId: folderId }));
-        } else {
-            console.warn('WebSocket not connected. Cannot send search query.');
-            if (!isAttemptingConnection) {
-                connectWebSocket(); 
-            }
-        }
-    }, [folderId, isAttemptingConnection, connectWebSocket]); 
+        setFiles([]);
+        setIsLoading(true);
+        
+        const initialSkip = 0;
+
+        setSearchRange({ skip: initialSkip, take: calculatedInitialTake });
+
+        const req = await fetch(`${apiUrl}/search`, {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            credentials: "include",
+            body: JSON.stringify({searchTerm: query, skip: initialSkip, take: calculatedInitialTake})
+        });
+
+        const res = await req.json();
+
+        setIsLoading(false);
+        setFiles(res.files);
+
+
+    }, [folderId, setFiles, setIsLoading, setSearchRange, setUpdateFiles, calculatedInitialTake]);
 
     const debouncedExecuteSearch = useMemo(() => {
         return debounce(executeSearch, 500);
     }, [executeSearch]);
 
-    const handleSearchInputChange = (e) => {
+    const continueSearch = useCallback(async () => {
         
-        if (!isLoading) {
-            const newQuery = e.target.value;
-            setSearchValue(newQuery);
+        if (!searchRange) {
+            console.log('Search range not initialized, cannot continue search.');
+            return;
+        }
+
+        if (isLoading) { 
+            console.log('Already loading more results, cannot continue search yet.');
+            return;
+        }
+
+        const container = fileContainerRef.current;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const buffer = 5;
+        
+        if (scrollTop + clientHeight >= scrollHeight - buffer) {
+            
+            console.log("Continuing search. Current range:", searchRange, "Query:", searchValue);
+            setIsLoading(true);
+
+            const itemsPerPage = 30;
+            const newSkip = searchRange.skip + searchRange.take;
     
-            if (!newQuery.trim()) {
-                setUpdateFiles((prev) => !prev);
-            }
+            setSearchRange({ skip: newSkip, take: itemsPerPage });
+            
     
+
+            const req = await fetch(`${apiUrl}/search`, {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                credentials: "include",
+                body: JSON.stringify({searchTerm: searchValue, skip: newSkip, take: itemsPerPage})
+            });
+
+            const res = await req.json();
+
+            setIsLoading(false);
+            
+            setFiles((prev) => [...prev, ...res.files]);
+
+        }
+    }, [searchRange, searchValue, setIsLoading, setSearchRange, isLoading]); 
+
+    
+
+    const handleSearchInputChange = (e) => {
+        const newQuery = e.target.value;
+        setSearchValue(newQuery);
+
+        if (!newQuery.trim()) {
+            debouncedExecuteSearch(""); 
+        } else {
             debouncedExecuteSearch(newQuery);
         }
     };
-
-    const establishConnection = useCallback(() => {
-
-        if (!isConnected && !isAttemptingConnection) {
-            connectWebSocket();
-        }
-    }, [isConnected, isAttemptingConnection, connectWebSocket]);
 
 
     const handleLogout = async () => {
@@ -379,11 +358,29 @@ export default function Header({ files, setFiles, isLoading, setIsLoading, setUp
 
     const clearInput = () => {
         setSearchValue("");
-        setUpdateFiles((prev) => !prev);
-        debouncedExecuteSearch("");
+        executeSearch("");
     };
 
 
+    useEffect(() => {
+        const currentFileContainer = fileContainerRef.current;
+        if (currentFileContainer && searchRange) { 
+            console.log("Adding scrollend listener. Current searchRange:", searchRange);
+            currentFileContainer.addEventListener("scroll", continueSearch);
+            
+            return () => {
+                console.log("Removing scrollend listener.");
+                currentFileContainer.removeEventListener("scroll", continueSearch);
+            };
+        } else {
+             console.log("Scrollend listener not added (no currentFileContainer or searchRange is null).");
+        }
+    }, [continueSearch, fileContainerRef, searchRange]);
+
+
+
+
+   
 
     return (
         <StyledContainer displayMode={displayMode}>
@@ -405,8 +402,6 @@ export default function Header({ files, setFiles, isLoading, setIsLoading, setUp
                         displayMode={displayMode}
                         value={searchValue} 
                         onChange={(e) => handleSearchInputChange(e)}
-                        onFocus={(e) => establishConnection(e)}
-                        onBlur={(e) => disconnectWebSocket(e)}
                     />
                     <StyledClear displayMode={displayMode} onClick={clearInput}>
                     {

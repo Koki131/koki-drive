@@ -18,10 +18,9 @@ const uploadPath = process.env.UPLOAD_PATH;
 
 const savePath = async (req, res) => {
 
-
-  const parentId = await saveFolderStructure(req.body.relativePath, res.locals.currentUser);
+  const parentIds = await saveFolderStructure(req.body.relativePath, res.locals.currentUser);
         
-  return res.status(200).json({ parentId: parentId });
+  return res.status(200).json({ parentIds: parentIds });
 };
 
 const getParentPath = async (req, res) => {
@@ -57,7 +56,8 @@ const checkFileStatus = async (req, res) => {
 };
 
 
-const uploadChunk = (req, res) => {
+const uploadChunk = async (req, res) => {
+
   const bb = busboy({ headers: req.headers });
   let fileName, chunkData, relativePath, chunkMetaData;
 
@@ -155,7 +155,7 @@ const writeChunk = (fd, chunkBuffer, startOffset, chunkMetaData, chunkData, user
 };
 
 const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
-
+  
   await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
   
 };
@@ -518,56 +518,36 @@ const isAuth = (req, res) => {
 
 
 const getFilesByParent = async (req, res) => {
+
+    const skip = req.query.skip;
+    const take = req.query.take;
     const parent = req.query.parent;
-    const files = await queryFilesByParent(req.user.id, parent);
+    const files = await queryFilesByParent(req.user.id, parent, skip, take);
 
     return res.status(200).json({files: files});
 };
 
 
-
-const handleSearchConnection = (ws, req) => {
+const handleSearchConnection = async (req, res) => {
   
-  const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'];
-  console.log(`[Search WS Controller] Client connected for /search from ${clientIp}`);
   
-  ws.on('message', async (messageBuffer) => {
+  let parsedMessage;
+  try {    
+    
+    parsedMessage = req.body;
+    console.log(parsedMessage);
+    
 
-    let parsedMessage;
+    const result = await getSearchResult(parsedMessage, req.user);
 
-    try {
+    return res.status(200).json({files: result});
 
-      const messageString = messageBuffer.toString();
-      parsedMessage = JSON.parse(messageString);
-      console.log(`[Search WS Controller] Received from ${clientIp}:`, parsedMessage);
+  } catch (error) {
+    
+    return res.status(400).json({message: "Bad query"})
 
-      if (parsedMessage.type === 'SEARCH_QUERY') {
-        const searchTerm = (parsedMessage.payload || '').toLowerCase();
-        const folderId = parsedMessage.folderId ? Number.parseInt(parsedMessage.folderId) : {};
-
-
-        await getSearchResult(ws, searchTerm, folderId, req.user);
-
-        ws.send(JSON.stringify({ type: 'SEARCH_COMPLETE', payload: {searchComplete: true} }));
-      } else {
-        console.warn(`[Search WS Controller] Unknown message type from ${clientIp}: ${parsedMessage.type}`);
-        ws.send(JSON.stringify({ type: 'ERROR', payload: 'Unknown message type' }));
-      }
-    } catch (error) {
-      console.error(`[Search WS Controller] Error processing message from ${clientIp}:`, error);
-      ws.send(JSON.stringify({ type: 'ERROR', payload: 'Invalid message format or server error' }));
-    }
-  });
-
-  ws.on('close', (code, reason) => {
-    console.log(`[Search WS Controller] Client ${clientIp} disconnected from /search. Code: ${code}, Reason: ${reason ? reason.toString() : 'N/A'}`);
-  });
-
-  ws.on('error', (error) => {
-    console.error(`[Search WS Controller] WebSocket error for client ${clientIp}:`, error);
-  });
-
-  // ws.send(JSON.stringify({ type: 'CONNECTION_ESTABLISHED', message: 'Connected to search service!' }));
+  }
+ 
 };
 
 
