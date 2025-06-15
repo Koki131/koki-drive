@@ -18,9 +18,9 @@ const uploadPath = process.env.UPLOAD_PATH;
 
 const savePath = async (req, res) => {
 
-  const parentIds = await saveFolderStructure(req.body.relativePath, res.locals.currentUser);
-        
-  return res.status(200).json({ parentIds: parentIds });
+  const folderData = await saveFolderStructure(req.body.folder, req.body.parentIdToSend, res.locals.currentUser, req.body.currentFolderId);
+
+  return res.status(200).json({ folderData: folderData });
 };
 
 const getParentPath = async (req, res) => {
@@ -145,7 +145,7 @@ const writeChunk = (fd, chunkBuffer, startOffset, chunkMetaData, chunkData, user
       }
       // Update metadata after successfully writing the chunk.
       updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user)
-        .then(() => res.status(200).json({ success: true }))
+        .then((file) => res.status(200).json({ file: file, success: true }))
         .catch((err) => {
           console.error('Error updating metadata:', err);
           res.status(500).json({ error: 'Metadata update failed' });
@@ -156,7 +156,7 @@ const writeChunk = (fd, chunkBuffer, startOffset, chunkMetaData, chunkData, user
 
 const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
   
-  await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
+  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
   
 };
 
@@ -166,15 +166,17 @@ const createNewFolder = async (req, res) => {
   const parentId = payload.parentId ? Number.parseInt(payload.parentId) : null;
   const folderName = payload.folderName;
   const user = res.locals.currentUser;
+  
+  let folderToSend = null;
 
   try {
-    await saveFolder(parentId, folderName, user);
+    folderToSend = await saveFolder(parentId, folderName, user);
   } catch (error) {
     
     return res.status(400).json({message: error.message});
   }
   
-  return res.status(200).json({message: "Folder saved successfully"});
+  return res.status(200).json({message: "Folder saved successfully", folder: folderToSend});
 
 };
 
@@ -232,6 +234,8 @@ const deleteFiles = async (req, res) => {
 
   const filePaths = await getFullPaths(filesToDelete, userUploadPath);
 
+  console.log(filePaths);
+  
   const errors = [];
 
   for (const file of filePaths) {
@@ -255,7 +259,7 @@ const deleteFiles = async (req, res) => {
     
     
   }
-
+  
   for (const fileId of filesToDelete) {
     try {
       await deleteFile(Number.parseInt(fileId));
@@ -431,65 +435,66 @@ const paste = async (req, res) => {
   if (body.path) {
     destinationFolderId = Number.parseInt(body.path);
   }
+  const fileIdStr = body.file;
 
-  for (const fileIdStr of body.files) {
-      const sourceFileId = Number.parseInt(fileIdStr);
-      let fileToCopy = await getFileById(sourceFileId); 
-      
-      if (!fileToCopy) {
-          console.error(`File with ID ${sourceFileId} not found.`);
-          return res.status(404).json({ message: `File with ID ${sourceFileId} not found.` }); 
-      }
+  const sourceFileId = Number.parseInt(fileIdStr);
+  let fileToCopy = await getFileById(sourceFileId); 
+  let filePastedTemp = null;
+
+  if (!fileToCopy) {
+      console.error(`File with ID ${sourceFileId} not found.`);
+      return res.status(404).json({ message: `File with ID ${sourceFileId} not found.` }); 
+  }
 
 
-      if (fileToCopy.type === "FOLDER") {
-          if (await isDescendantOrSelf(destinationFolderId, sourceFileId)) {
-              const errorMessage = `Cannot paste folder '${fileToCopy.name}' into itself or one of its own subfolders.`;
-              console.error(errorMessage + ` (Source ID: ${sourceFileId}, Target Parent ID: ${destinationFolderId})`);
-              return res.status(400).json({ message: errorMessage });
-          }
-      }
-
-      try {
-
-          // strategy for copy or cut
-          const srcFileFullPaths = await getFullPaths([sourceFileId], orgPath);
-          
-          if (srcFileFullPaths.length === 0) {
-              console.error(`Could not resolve source path for file ID ${sourceFileId}`);
-
-              return res.status(500).json({message: `Error processing file ${fileToCopy.name}: Source path not found.`});
-          }
-
-          if (operationType === "copy") {
-            await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
-          } else if (operationType === "cut") {
-            await saveCutToDb(fileToCopy, destinationFolderId);
-          } else {
-            return res.status(500).json({message: "Either copy or cut allowed"});
-          }
-
-          const srcItemFileSystemPath = srcFileFullPaths[0].path;
-          const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
-
-          // rename instead of cpSync for cut
-
-          if (operationType === "copy") {
-            fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
-          } else {
-            console.log(srcItemFileSystemPath, destItemFileSystemPath);
-            
-            fs.rename(srcItemFileSystemPath, destItemFileSystemPath, () => {});
-          }
-          
-      } catch (error) {
-          console.error(`Error pasting file '${fileToCopy.name}' (ID: ${sourceFileId}):`, error);
-
-          return res.status(500).json({ message: `Failed to paste file '${fileToCopy.name}': ${error.message}` });
+  if (fileToCopy.type === "FOLDER") {
+      if (await isDescendantOrSelf(destinationFolderId, sourceFileId)) {
+          const errorMessage = `Cannot paste folder '${fileToCopy.name}' into itself or one of its own subfolders.`;
+          console.error(errorMessage + ` (Source ID: ${sourceFileId}, Target Parent ID: ${destinationFolderId})`);
+          return res.status(400).json({ message: errorMessage });
       }
   }
+
+  try {
+
+      // strategy for copy or cut
+      const srcFileFullPaths = await getFullPaths([sourceFileId], orgPath);
+      
+      if (srcFileFullPaths.length === 0) {
+          console.error(`Could not resolve source path for file ID ${sourceFileId}`);
+
+          return res.status(500).json({message: `Error processing file ${fileToCopy.name}: Source path not found.`});
+      }
+
+      if (operationType === "copy") {
+        filePastedTemp = await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
+      } else if (operationType === "cut") {
+        filePastedTemp = await saveCutToDb(fileToCopy, destinationFolderId);
+      } else {
+        return res.status(500).json({message: "Either copy or cut allowed"});
+      }
+
+      const srcItemFileSystemPath = srcFileFullPaths[0].path;
+      const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
+
+      // rename instead of cpSync for cut
+
+      if (operationType === "copy") {
+        fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
+      } else {
+        console.log(srcItemFileSystemPath, destItemFileSystemPath);
+        
+        fs.rename(srcItemFileSystemPath, destItemFileSystemPath, () => {});
+      }
+      
+  } catch (error) {
+      console.error(`Error pasting file '${fileToCopy.name}' (ID: ${sourceFileId}):`, error);
+
+      return res.status(500).json({ message: `Failed to paste file '${fileToCopy.name}': ${error.message}` });
+  }
   
-  return res.status(200).json({ message: "Files pasted successfully." });
+  
+  return res.status(200).json({ message: "File pasted successfully.", filePasted: filePastedTemp });
 };
 
 // const uploadFile = [upload.single('file_upload'), async (req, res) => {
@@ -519,35 +524,28 @@ const isAuth = (req, res) => {
 
 const getFilesByParent = async (req, res) => {
 
-    const skip = req.query.skip;
-    const take = req.query.take;
-    const parent = req.query.parent;
-    const files = await queryFilesByParent(req.user.id, parent, skip, take);
-
-    return res.status(200).json({files: files});
+  const { parent, take, cursor: cursorStr } = req.query;
+  const cursor = cursorStr ? JSON.parse(cursorStr) : null;
+    
+  const result = await queryFilesByParent(req.user.id, parent, cursor, take);
+  
+  return res.status(200).json({result: result});
 };
 
 
 const handleSearchConnection = async (req, res) => {
-  
-  
-  let parsedMessage;
   try {    
-    
-    parsedMessage = req.body;
-    console.log(parsedMessage);
-    
+
+    const parsedMessage = req.body;
 
     const result = await getSearchResult(parsedMessage, req.user);
 
-    return res.status(200).json({files: result});
+    return res.status(200).json({ result: result });
 
   } catch (error) {
-    
-    return res.status(400).json({message: "Bad query"})
 
+    return res.status(400).json({ message: "Bad query" });
   }
- 
 };
 
 
