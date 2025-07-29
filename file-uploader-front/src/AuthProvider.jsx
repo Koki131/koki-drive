@@ -4,7 +4,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [authLoading, setAuthLoading] = useState(true);
     const [displayMode, setDisplayMode] = useState(false);
 
     useEffect(() => {
@@ -20,7 +20,7 @@ export function AuthProvider({ children }) {
             } catch(e) {                
                 console.error("Error checking auth status", e);
             } finally {
-                setLoading(false);
+                setAuthLoading(false);
             }
         };
         checkAuth();
@@ -50,13 +50,13 @@ export function AuthProvider({ children }) {
             console.error(e);
             
         } finally {
-            setLoading(false);
+            setAuthLoading(false);
         }
     };
     
     return (
         <AuthContext.Provider value={{ user, login, logout, toggle, displayMode }}>
-            {!loading && children}
+            {!authLoading && children}
         </AuthContext.Provider>
     );
 }

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { isEqual } from 'lodash';
+import { includes, isEqual } from 'lodash';
 import styled, { keyframes } from 'styled-components';
 import Sidebar from './Sidebar';
 import fileImage from './assets/images/file.svg';
@@ -16,7 +16,13 @@ import downloadImg from "./assets/images/download.svg";
 import pasteImg from "./assets/images/paste.svg";
 import deleteImg from "./assets/images/delete.svg";
 import newImg from "./assets/images/new.svg";
+import sortBy from "./assets/images/sort.svg";
+import sortAsc from "./assets/images/sort_asc.svg";
+import sortDesc from "./assets/images/sort_desc.svg";
+import nameSort from "./assets/images/name_sort.svg";
 import { useAuth } from './AuthProvider';
+import useSseListener from '../hooks/useEventSource';
+import { BST } from '../util/BST';
 
 
 const ContentContainer = styled.div`
@@ -251,7 +257,7 @@ const TextArea = styled.textarea`
   width: 70px;
   resize: none;
   background: none;
-  color: white;
+  color: ${props => props.displayMode ? "white" : "black"};
   border: none;
   overflow: hidden;
   font-size: 11px;
@@ -336,184 +342,548 @@ const StyledFolderSaveButton = styled.p`
 
 `
 
-let grid = {};
+// let grid = {};
 let width = 100;
 let height = 100;
 let fileCoords = {};
 const apiUrl = import.meta.env.VITE_API_URL;
 
-export default function Content({ 
-  files, setFiles, isLoading, setIsLoading, 
-  updateFiles, setUpdateFiles, fileContainerRef,
-  calculatedInitialTake
+export default function Content({
+  files, setFiles, isLoading, setIsLoading,
+  updateFiles, setUpdateFiles,
+  fileContainerRef,
+  calculatedInitialTake,
+  nextCursor,
+  lazyLoadState
 }) {
 
   const navigate = useNavigate();
   const { folderId } = useParams();
-  const [highlight, setHighlight] = useState({fileId: -2, highlight: false});
   const [selectedFiles, setSelectedFiles] = useState(null);
-  const [rightClickSelectedFile, setRightClickSelectedFile] = useState(null);
-  const [selectionBox, setSelectionBox] = useState(null);
-  const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});
-  const [containerRect, setContainerRect] = useState(null);
-  const [minimize, setMinimize] = useState(false);
+  const [rightClickSelectedFile, setRightClickSelectedFile] = useState(null); 
+  const [selectionStart, setSelectionStart] = useState({startPoint: null, isSelecting: false});  // can be a ref (?)
+  const [containerRect, setContainerRect] = useState(null); 
   const [fileContextWindow, setFileContextWindow] = useState({visible: false, x: 0, y: 0});
-  const [jobs, setJobs] = useState({});
   const [shouldRename, setShouldRename] = useState(-1);
   const [newName, setNewName] = useState("");
-  const [filesCopied, setFilesCopied] = useState([]);
+  const [filesCopied, setFilesCopied] = useState([]); 
   const [filesCut, setFilesCut] = useState([]);
-  const [newFolder, setNewFolder] = useState(false);
+  const [newFolder, setNewFolder] = useState(false); // change to ref
   const [typeClicked, setTypeClicked] = useState("");
-  const [loadRange, setLoadRange] = useState(null);
-  const { displayMode } = useAuth();
-  const jobsRef = useRef(jobs);
-  const folderIdRef = useRef(folderId);
+  const [sortOptions, setSortOptions] = useState({sortBy: "name", sortDir: "asc"});
+  
+  const { displayMode, user, authLoading } = useAuth();
+  
+  const hasMore = useRef(true); // change to ref
+
+  const sseUrl = !authLoading && user ? `${apiUrl}/events?userId=${user.id}` : null;
+
+  const folderIdRef = useRef(folderId); 
   const folderNameRef = useRef(null);
+  // Ref to prevent multiple concurrent loads
+  const isLoadingMoreRef = useRef(false);
+  const lastMousePositionRef = useRef({ x: 0, y: 0 });
+  const itemRefs = useRef({});
+  const selectionBoxRef = useRef();
+  const progressCompRef = useRef();
+  const gridRef = useRef({});
+  const liveRenderedCount = useRef(0);
+  const maxRenderedFiles = useRef(0);
+  const uploadQueueRef = useRef([]);
+  
+
+  // fix uploadQueue
+  
+  const memoizedFileValues = useMemo(() => {
+    if (!files.folders && !files.files) return [];
+    
+    const sortedFolders = (sortOptions.sortDir === 'asc') ? files.folders.getInOrder() : files.folders.getReverseOrder();
+    const sortedFiles = (sortOptions.sortDir === 'asc') ? files.files.getInOrder() : files.files.getReverseOrder();
+    
+    return [...sortedFolders, ...sortedFiles];
+
+  }, [files, sortOptions]);
+  
+  const assignFileRef = (element, fileId) => {
+    
+    if (element) {
+      itemRefs.current[fileId] = element;
+    } else {
+      delete itemRefs.current[fileId];
+    }
+  };
+
+  const handleSseMessage = (message) => {
+
+      if (message) {
+        switch (message.event) {
+          case "file-transfer": {
+
+            const fileData = message.folder || message.file || message.filePasted;
+
+            if (fileData.parentId !== folderIdRef.current) return;
+
+            if (liveRenderedCount.current < maxRenderedFiles.current) {
+
+              setFiles(currentBst => {
+                const newFolders = currentBst.folders.clone(); 
+                const newFiles = currentBst.files.clone(); 
+  
+  
+                let fileExists = null;
+
+                if (fileData.type === 'FOLDER') {
+                  fileExists = newFolders.find(fileData);
+                } else {
+                  fileExists = newFiles.find(fileData);
+                }
+
+                if (fileExists) {
+                  return currentBst;
+                }
+                
+                if (fileData.type === 'FOLDER') {
+                  newFolders.add(fileData);
+                } else {
+                  newFiles.add(fileData);
+                }
+                
+                return {folders: newFolders, files: newFiles};
+              });
+
+            } else {
+
+              uploadQueueRef.current.push(fileData);
+              
+              if (!hasMore.current) {
+                  hasMore.current = true;
+              }             
+
+            }
+            break;
+    
+          }
+          case "preview-complete": {
+
+            setFiles(currentBst => {
+              const newFolders = currentBst.folders.clone();
+              const newFiles = currentBst.files.clone();
+              
+              let fileNode = null;
+              if (message.file.type === 'FOLDER') {
+                fileNode = newFolders.find(message.file)
+              } else {
+                fileNode = newFiles.find(message.file);
+              }
+
+              if (fileNode) {
+                fileNode.previewUrl = message.previewUrl;
+              }
+              return {folders: newFolders, files: newFiles};
+            });
+
+            break;
+          }
+
+        }
+      }
+
+
+  }; 
+
+
+  useSseListener(sseUrl, handleSseMessage);
+
 
   useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
+    folderIdRef.current = folderId ? Number.parseInt(folderId) : null;
+    gridRef.current = {};
+    setShouldRename(-1);
 
-  useEffect(() => {
-    folderIdRef.current = folderId
   }, [folderId]);
 
+  
   useEffect(() => {
+    // Get a reference to the container for use in the cleanup function
+
+    console.log("ADDING EVENTS EFFECT");
+    
+    const currentFileContainer = fileContainerRef.current;
+
     const handleMouseUp = (e) => {
       if (selectionStart.isSelecting) {
-        setSelectionStart({startPoint: null, isSelecting: false});
-        setSelectionBox(null);
+        setSelectionStart({ startPoint: null, isSelecting: false });
+        if (selectionBoxRef.current) {   
+          setSelectedFiles(selectionBoxRef.current.getSelectedItems());
+          selectionBoxRef.current.updateState(null);
+        }
+        lastMousePositionRef.current = null;
+      }
+    };
+    
+    const handleMouseMove = (e) => {
+      if (!selectionStart.isSelecting) return;
+      lastMousePositionRef.current = { x: e.clientX, y: e.clientY };
+      updateSelection(e.clientX, e.clientY);
+    };
+
+    const handleScroll = () => {
+      if (selectionStart.isSelecting && lastMousePositionRef.current) {
+        updateSelection(lastMousePositionRef.current.x, lastMousePositionRef.current.y);
       }
     };
 
-    const handleMouseMove = (e) => {
-      if (!selectionStart.isSelecting || !containerRect) return;
-      
-      
-      let currentX = Math.max(0, Math.round(e.clientX - containerRect.left));
-      let currentY = Math.max(0, Math.round(e.clientY - containerRect.top + fileContainerRef.current.scrollTop));
-    
-      
-      const x = Math.min(currentX, selectionStart.startPoint.x);
-      const y = Math.min(currentY, selectionStart.startPoint.y);
-      const width = Math.abs(currentX - selectionStart.startPoint.x);
-      const height = Math.abs(currentY - selectionStart.startPoint.y);
-      getFilesInSelection({ x, y, currentX, currentY, width, height });
-      setSelectionBox({ x, y, currentX, currentY, width, height });
-    };
-    
 
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
-
+    
+    if (currentFileContainer) {
+      currentFileContainer.addEventListener("scroll", handleScroll);
+    }
+    
     return () => {
+
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (currentFileContainer) {
+        currentFileContainer.removeEventListener("scroll", handleScroll);
+      }
     };
-  }, [selectionStart.isSelecting]);
+    
+}, [selectionStart.isSelecting, fileContainerRef.current]);
 
 
   useEffect(() => {
-    
 
+    console.log("GETTING FILES");
+    
     const getFiles = async () => {
-        console.log("INSIDE GET FILES");
-        
+        if (!calculatedInitialTake.current) {
+            return;
+        }
+
+        setIsLoading(true);
+        isLoadingMoreRef.current = true;
+
+        hasMore.current = true; 
+        nextCursor.current = null;
+
         try {
+            const parent = folderId ? folderId : "";
           
-          setIsLoading(true);
-          const parent = folderId ? folderId : "";
-          const request = await fetch(`${apiUrl}/getFilesByParent?parent=${parent}&skip=${0}&take=${calculatedInitialTake}`, {
-              method: "GET",
-              headers: { "Content-Type" : "text/plain"},
-              credentials: 'include',
-          });
-          const response = await request.json();
-          if (!isEqual(response.files, files)) {
-            setFiles(response.files);
-          } 
-          
+            const request = await fetch(`${apiUrl}/getFilesByParent?parent=${parent}&take=${calculatedInitialTake.current}`, {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+                credentials: 'include',
+            });
+            if (!request.ok) {
+                throw new Error(`HTTP error! status: ${request.status}`);
+            }
+            const response = await request.json();
+            const { files: initialFiles, nextCursor: initialNextCursor } = response.result;
+   
+            liveRenderedCount.current = initialFiles.length;
+            maxRenderedFiles.current = calculatedInitialTake.current; 
+
+            uploadQueueRef.current = [];
+   
+
+            const newFolders = new BST(calculatedInitialTake.current);
+            const newFiles = new BST(calculatedInitialTake.current);
+            
+            for (const file of initialFiles) {
+              if (file.type === 'FOLDER') {
+                newFolders.add(file);
+              } else {
+                newFiles.add(file);
+              }
+            }
+
+            nextCursor.current = initialNextCursor;
+            hasMore.current = !!nextCursor.current;
+            
+            setFiles({folders: newFolders, files: newFiles});
+
+            
+
         } catch (e) {
-          console.error(e);
-          
+            console.error("Error fetching initial files:", e);
+            setFiles({folders: new BST(0), files: new BST(0)});
         } finally {
-          setIsLoading(false);
+            setIsLoading(false);
+            isLoadingMoreRef.current = false;
         }
     };
 
+    setFiles({folders: new BST(0), files: new BST(0)});
     getFiles();
+
+}, [folderId, calculatedInitialTake.current, updateFiles]);
+
+  const lazyLoadFiles = async () => {
+
+    if (!hasMore.current || isLoadingMoreRef.current || isLoading) return;
     
-  }, [folderId, newFolder, updateFiles, calculatedInitialTake]);
-
-
-  const lazyLoadFiles = useCallback(async () => {
-      
-    console.log("TEST");
-    
-    if (!loadRange) {
-        console.log('Search range not initialized, cannot continue search.');
-        return;
-    }
-
-    if (isLoading) { 
-        console.log('Already loading more results, cannot continue search yet.');
-        return;
-    }
-
     const container = fileContainerRef.current;
+    if (!container) return;
+
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const buffer = 5;
-    
+    const buffer = 20;
+
     if (scrollTop + clientHeight >= scrollHeight - buffer) {
-        
-      setLoadRange({skip: loadRange.skip + loadRange.take, take: 30});
+      
+      isLoadingMoreRef.current = true;
+      setIsLoading(true);
 
+      const take = 30;
+      maxRenderedFiles.current += take;   
+
+      try {
+
+        if (uploadQueueRef.current.length > 0) {
+          // uploadQueueRef.current.sort(compareFiles); if concurrent uploads
+
+          const pageFromQueue = uploadQueueRef.current.splice(0, take);
+          
+          let folderCount = 0; 
+          const size = Math.min(pageFromQueue.length, take);
+
+          for (let i = 0; i < size; i++) {
+            if (pageFromQueue[i].type === 'FOLDER') {
+              folderCount++;
+            }
+          }
+
+          const fileCount = size - folderCount;
+
+          setFiles(currentBst => {
+            
+            const newFolders = currentBst.folders.clone(currentBst.folders.size + folderCount);
+            const newFiles = currentBst.files.clone(currentBst.files.size + fileCount);
+
+
+              for (const file of pageFromQueue) { 
+                  if (file.type === 'FOLDER') {
+                    if (!newFolders.find(file)) {
+                      newFolders.add(file);
+                    }
+                  } else {
+                    if (!newFiles.find(file)) {
+                      newFiles.add(file);
+                    }
+                  }
+                  liveRenderedCount.current++;
+              }
+              return {folders: newFolders, files: newFiles};
+          });
+          
+          const lastFileInPage = pageFromQueue[pageFromQueue.length - 1];
+          nextCursor.current = { type: lastFileInPage.type, name: lastFileInPage.name, id: lastFileInPage.id };
+          
+          return;
+        }
+
+
+        const parent = folderId ? folderId : "";
+
+        let url = `${apiUrl}/getFilesByParent?parent=${parent}&take=${take}`;
+        if (nextCursor) {
+          url += `&cursor=${encodeURIComponent(JSON.stringify(nextCursor.current))}`;
+        }
+
+          const request = await fetch(url, {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+              credentials: 'include',
+          });
+
+          if (!request.ok) {
+              throw new Error(`HTTP error! status: ${request.status}`);
+          }
+
+          const response = await request.json();
+          const { files: newFiles, nextCursor: newCursor } = response.result;
+
+          
+        if (newFiles && newFiles.length > 0) {
+
+            let folderCount = 0; 
+            const size = Math.min(newFiles.length, take);
+
+            for (let i = 0; i < size; i++) {
+              if (newFiles[i].type === 'FOLDER') {
+                folderCount++;
+              }
+            }
+
+            const fileCount = size - folderCount;
+
+            setFiles(currentBst => {
+              
+              const newFoldersBst = currentBst.folders.clone(currentBst.folders.size + folderCount);
+              const newFilesBst = currentBst.files.clone(currentBst.files.size + fileCount);
+
+
+                for (const file of newFiles) { 
+                    if (file.type === 'FOLDER') {
+                      if (!newFoldersBst.find(file)) {
+                        newFoldersBst.add(file);
+                      }
+                    } else {
+                      if (!newFilesBst.find(file)) {
+                        newFilesBst.add(file);
+                      }
+                    }
+                    liveRenderedCount.current++;
+                }
+                return {folders: newFoldersBst, files: newFilesBst};
+            });
+        }
+          
+        nextCursor.current = newCursor;               
+
+      } catch (e) {
+          console.error("Error lazy loading files:", e);
+      } finally {
+          setIsLoading(false);
+          isLoadingMoreRef.current = false;
+      }
     }
+  };
 
-  }, [isLoading, setLoadRange]); 
-  
   useEffect(() => {
-    const currentFileContainer = fileContainerRef.current;
-    if (currentFileContainer && loadRange) { 
-        console.log("Adding scrollend listener. Current searchRange:", loadRange);
-        currentFileContainer.addEventListener("scroll", lazyLoadFiles);
-        
-        return () => {
-            console.log("Removing scrollend listener.");
-            currentFileContainer.removeEventListener("scroll", lazyLoadFiles);
-        };
-    } else {
-         console.log("Scrollend listener not added (no currentFileContainer or loadRange is null).");
-    }
-  }, [lazyLoadFiles, fileContainerRef, loadRange]);
+    setFileSize();
+    populateGrid();
+  }, [memoizedFileValues]);
 
+  const populateGrid = () => {
+    
+    gridRef.current = {};
+    // const currentFilesCount = memoizedFileValues.length; 
+
+    const containerRect = fileContainerRef.current.getBoundingClientRect();
+    
+    for (const id of Object.keys(itemRefs.current)) {
+      const fileElement = itemRefs.current[id];
+
+      // const fileData = memoizedFileValues[i];
+
+      if (fileElement) {
+        
+
+        const rect = fileElement.getBoundingClientRect();
+
+        const fileId = Number.parseInt(id);
+
+        const fileX = Math.round((rect.left - containerRect.left));
+        const fileY = Math.round((rect.top + fileContainerRef.current.scrollTop) - containerRect.top);
+        const fileWidth = Math.round(rect.width);
+        const fileHeight = Math.round(rect.height);
+
+        const r = Math.floor(fileY / fileHeight);
+        const c = Math.floor(fileX / fileWidth);
+        
+        
+        const key = `${r}_${c}`;
+
+        const fileImageX = Math.floor(fileCoords["image"].x + c * rect.width);
+        const fileImageY = Math.floor(fileCoords["image"].y + r * rect.height);
+        const fileImageWidth = fileCoords["image"].width;
+        const fileImageHeight = fileCoords["image"].height;
+
+        const fileNameX = Math.floor(fileCoords["name"].x + c * rect.width);
+        const fileNameY = Math.floor(fileCoords["name"].y + r * rect.height);
+        const fileNameWidth = fileCoords["name"].width;
+        const fileNameHeight = fileCoords["name"].height;
+
+        const file = {
+          fileId: fileId, x: fileX, y: fileY, width: fileWidth, height: fileHeight,
+          image: {x: fileImageX, y: fileImageY, width: fileImageWidth, height: fileImageHeight},
+          name: {x: fileNameX, y: fileNameY, width: fileNameWidth, height: fileNameHeight}
+        }
+        gridRef.current[key] = file;
+        
+
+      } else {
+        console.warn(`Ref for newly added item at index ${i} (file: ${fileData.name}) is not available. This might happen if the element did not mount correctly.`);
+      }
+    }    
+
+
+  };
+
+  useEffect(() => {
+
+    const currentFileContainer = fileContainerRef.current;
+    if (currentFileContainer && !isLoadingMoreRef.current && hasMore.current && lazyLoadState.current === "list") {
+      currentFileContainer.addEventListener("scroll", lazyLoadFiles);
+
+      return () => {
+
+        if (currentFileContainer) {
+          currentFileContainer.removeEventListener("scroll", lazyLoadFiles);
+        }
+      };
+    } else {
+      // console.log("Scroll listener not added (no currentFileContainer).");
+    }
+
+  }, [lazyLoadFiles, fileContainerRef, isLoadingMoreRef.current, hasMore.current, lazyLoadState.current]);
 
   const handleClick = (file) => {
 
     if (file.type === "FOLDER") {
+      if (file.id === folderIdRef.current) {
+        setUpdateFiles(prev => !prev);
+      }
       navigate(`/folders/${file.id}`);
     }
 
   };
+  const areSelectedObjectsEqual = (objA, objB) => {
+    if (!objA && !objB) return true; 
+    if (!objA || !objB) return false;
+  
+    const keysA = Object.keys(objA);
+    const keysB = Object.keys(objB);
+  
+    if (keysA.length !== keysB.length) return false;
+  
+    for (const key of keysA) {
 
-
+      if (!objB.hasOwnProperty(key) || objA[key]?.fileId !== objB[key]?.fileId) {
+        return false;
+      }
+    }
+    return true;
+  };
+  
   const handleSelected = (e, fileId) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    setSelectedFiles(currentSelected => {
+      const temp = {};
+      if (fileId) {
+        // Your logic for single/multi-select. This is a simple single-select replace:
+        temp[fileId] = { fileId: fileId };
+      }
+  
+      if (areSelectedObjectsEqual(currentSelected, temp)) {
+        return currentSelected; // Return previous state if no actual change
+      }
+      return temp;
+    });
+    
+    setFileContextWindow({ visible: false, x: 0, y: 0 });
 
-    const temp = {};
-    if (fileId) {
-      temp[fileId] = {fileId: fileId};
-    }
-    setSelectedFiles(temp);
-    setFileContextWindow({visible: false, x: 0, y: 0});
   };
 
   const handleRightClick = async (e, fileId) => {
     e.preventDefault();
     e.stopPropagation();
-
+    
+    
     const target = e.target.closest("[data-file-id]");
 
     const clickedFileType = target ? target.getAttribute("data-file-type") : null;
@@ -523,7 +893,7 @@ export default function Content({
   
     if (shouldRename !== -1) {
       if (newName.trim() !== "") {
-        await fetch(`${apiUrl}/rename`, {
+        const req = await fetch(`${apiUrl}/rename`, {
           method: "PUT",
           headers: {"Content-Type":"application/json"},
           credentials: "include",
@@ -532,11 +902,30 @@ export default function Content({
             name: newName.trim()
           })
         });
-        setFiles(prevFiles =>
-          prevFiles.map(file =>
-            file.id === shouldRename ? { ...file, name: newName.trim() } : file
-          )
-        );
+
+        if (!req.ok) {
+          alert(req.errors);
+          return;
+        }
+        const res = await req.json();
+        setFiles(currentBst => {
+          const newFolders = currentBst.folders.clone();
+          const newFiles = currentBst.files.clone();
+          
+          const fileToRename = res.renamedFile;
+
+          let fileFound = null;
+          if (fileToRename.type === "FOLDER") {
+            fileFound = newFolders.find(fileToRename)
+          } else {
+            fileFound = newFiles.find(fileToRename);
+          }
+
+
+          fileFound.name = newName.trim();
+          
+          return {folders: newFolders, files: newFiles};
+        });
       }
     }
     
@@ -552,8 +941,9 @@ export default function Content({
       if (!selectedFiles || Object.keys(selectedFiles).length === 0) {
         const temp = {};
         if (fileId) {
-          temp[fileId] = {fileId: fileId};
+          temp[fileId] = { fileId: fileId };
         }
+        
         setSelectedFiles(temp);
       }
     }
@@ -574,13 +964,9 @@ export default function Content({
     });
   };
 
-  const handleHighlight = (fileId, shouldHighlight) => {
-    setHighlight({fileId, shouldHighlight});
-  };
 
   const handleMouseDown = async (e) => {
     const target = e.target;
-
     setNewFolder(false);
 
     if (!target.closest('[data-context-window="true"]') && target.closest('[file-image-id]') === null && target.closest('[file-name-id]') === null) {
@@ -594,30 +980,49 @@ export default function Content({
     
     if (shouldRename !== -1 && !target.closest('[text-area-id]') && newName.trim() !== "") {
 
-      await fetch(`${apiUrl}/rename`, {
-        method: "PUT",
-        headers: {"Content-Type":"application/json"},
-        credentials: "include",
-        body: JSON.stringify({
-          fileId: shouldRename,
-          name: newName.trim()
-        })
-      });
+        const req = await fetch(`${apiUrl}/rename`, {
+          method: "PUT",
+          headers: {"Content-Type":"application/json"},
+          credentials: "include",
+          body: JSON.stringify({
+            fileId: shouldRename,
+            name: newName.trim()
+          })
+        });
 
-      setFiles(prevFiles =>
-        prevFiles.map(file =>
-          file.id === shouldRename ? { ...file, name: newName.trim() } : file
-        )
-      );
+        if (!req.ok) {
+          alert(req.errors);
+          return;
+        }
+        const res = await req.json();
 
-      setShouldRename(-1);
-      
+        setFiles(currentBst => {
+          const newFolders = currentBst.folders.clone();
+          const newFiles = currentBst.files.clone();
+          
+          const fileToRename = res.renamedFile;
+
+          let fileFound = null;
+          if (fileToRename.type === "FOLDER") {
+            fileFound = newFolders.find(fileToRename)
+          } else {
+            fileFound = newFiles.find(fileToRename);
+          }
+
+
+          fileFound.name = newName.trim();
+          
+          return {folders: newFolders, files: newFiles};
+        });
     }
-    
-    
+    if (!target.closest('[text-area-id]')) {
+      setShouldRename(-1);
+    }
+
     if (target.closest('[file-image-id]') || target.closest('[file-name-id]')) {
       return;
     }
+    
     
     setSelectedFiles(null);  
     setFileContextWindow({visible: false, x: 0, y: 0});
@@ -631,13 +1036,18 @@ export default function Content({
     
     if (shouldRename === -1) {
       setContainerRect(containerRect);
-      setFileSize();
+      populateGrid();
       setSelectionStart({startPoint: { x: startX, y: startY }, isSelecting: true});
+      lastMousePositionRef.current = { x: e.clientX, y: e.clientY };
+      
     } 
     
   };
 
   const setFileSize = () => {
+
+    // NOT NEEDED NOW, MIGHT NEED IN FUTURE (?)
+
     const file = fileContainerRef.current.querySelector('[data-file-id]');
     
     if (!file) return;
@@ -661,99 +1071,41 @@ export default function Content({
     fileCoords["image"] = {x: xImage, y: yImage, width: fileImageRect.width, height: fileImageRect.height};
     fileCoords["name"] = {x: xName, y: yName, width: fileNameRect.width, height: fileNameRect.height};
     
-    getFileRects();
+
   };
 
-  const getFileRects = () => {
-    
-    if (!isLoading && fileContainerRef.current) {
-      
-      const containerRect = fileContainerRef.current.getBoundingClientRect();
-      const fileElements = fileContainerRef.current.querySelectorAll('[data-file-id]');
 
-      let rect = null;
-      grid = {};
-      
-      const coords = Array.from(fileElements).map((el, index) => {
-        const fileId = el.getAttribute('data-file-id');
-        rect = el.getBoundingClientRect();
-        // let valX = (Math.floor((rect.left - containerRect.left) / 100)) * (100 + Math.floor(rect.width) % 100);
-        
-        return {
-          fileId,
-          x: Math.round((rect.left - containerRect.left)),
-          y: Math.round((rect.top + fileContainerRef.current.scrollTop) - containerRect.top),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        };
-      });
-      
-      coords.forEach((file) => {
-        const r = Math.floor(file.y / file.height);
-        const c = Math.floor(file.x / file.width);
-        
-        const key = `${r}_${c}`;
-        
-        file["image"] = {
-          x: Math.floor(fileCoords["image"].x + c * rect.width), 
-          y: Math.floor(fileCoords["image"].y + r * rect.height), 
-          width: fileCoords["image"].width, height: fileCoords["image"].height
-        };
-        file["name"] = {
-          x: Math.floor(fileCoords["name"].x + c * rect.width), 
-          y: Math.floor(fileCoords["name"].y + r * rect.height), 
-          width: fileCoords["name"].width , height: fileCoords["name"].height
-        };
-        grid[key] = file;
-        
-      });
-    }
-  };
+  const updateSelection = (currentClientX, currentClientY) => {
+    if (!selectionStart.isSelecting || !containerRect || !selectionStart.startPoint || !fileContainerRef.current) return;
 
-  const getFilesInSelection = (selectionBox) => {    
-    
-    // console.log(selectionBox);
-    // console.log(grid);
-    
-    const startRow = Math.floor(selectionBox.y / height);
-    const startCol = Math.floor(selectionBox.x / width);
-    const endRow = Math.floor((selectionBox.y + selectionBox.height) / height);
-    const endCol = Math.floor((selectionBox.x + selectionBox.width) / width);
-    
-    const tempFiles = {};
-    
-    for (let r = startRow; r <= endRow; r++) {
-      for (let c = startCol; c <= endCol; c++) {
-        const key = `${r}_${c}`;
-        if (grid[key]) {
-          if (rectanglesIntersect(grid[key]["image"], selectionBox) || rectanglesIntersect(grid[key]["name"], selectionBox)) {
-            tempFiles[grid[key]["fileId"]] = grid[key];
-          }
-        }
-      }
+    let currentXRelativeToContainer = Math.max(0, Math.round(currentClientX - containerRect.left));
+
+    let currentYRelativeToScrollableContent = Math.max(0, Math.round(currentClientY - containerRect.top + fileContainerRef.current.scrollTop));
+
+    const startPointX = selectionStart.startPoint.x;
+    const startPointY = selectionStart.startPoint.y;
+
+    const x = Math.min(currentXRelativeToContainer, startPointX);
+    const y = Math.min(currentYRelativeToScrollableContent, startPointY);
+    const width = Math.abs(currentXRelativeToContainer - startPointX);
+    const height = Math.abs(currentYRelativeToScrollableContent - startPointY);
+
+    const selectionData = {
+      x, 
+      y, 
+      width,
+      height,
+      currentX: currentXRelativeToContainer,
+      currentY: currentYRelativeToScrollableContent,
+    };
+
+    if (selectionBoxRef.current) {
+      // Example of updating the child's state
+      selectionBoxRef.current.updateState(selectionData);
     }
-    
-    
-    
-    setSelectedFiles(tempFiles);
-    
     
   };
   
-  const rectanglesIntersect = (rectA, rectB) => {
-    // console.log(rectA, rectB);
-    
-    return (
-      rectA.x < rectB.x + rectB.width &&         
-      rectA.x + rectA.width > rectB.x &&           
-      rectA.y < rectB.y + rectB.height &&          
-      rectA.y + rectA.height > rectB.y            
-    );
-  };
-
-  const handleMinimize = (e) => {
-    setMinimize(!minimize);
-  };
 
   const handleNewFolder = () => {
     setFileContextWindow({visible: false, x: 0, y:0});
@@ -804,7 +1156,9 @@ export default function Content({
       const timer = setTimeout(() => controller.abort(), timeout);
 
       const monitorInterval = setInterval(() => {
-        const job = jobsRef.current[jobId];
+        const currJobs = progressCompRef.current.getCurrentJobs();
+        const job = currJobs[jobId];
+
         if (job) {
 
           if (job.pause || job.close) {
@@ -833,11 +1187,15 @@ export default function Content({
 
     while (true) {
 
-      let res = await waitForResume();
+      let res;
+
+      if (waitForResume) {
+        res = await waitForResume();
+      }
       
 
-      if (res === 'closed') {
-        deleteJob(jobId);
+      if (jobId && res && res === 'closed') {
+        progressCompRef.current.removeJob(jobId);
         throw new Error("Upload cancelled by user");
       }
       try {
@@ -856,11 +1214,13 @@ export default function Content({
       } catch (error) {
           console.error(`Fetch failed: ${error.message}`);
           
-          res = await waitForResume();
+          if (waitForResume) {
+            res = await waitForResume();
+          }
 
-          if (res === 'closed') {
+          if (jobId && res && res === 'closed') {
             
-            deleteJob(jobId);
+            progressCompRef.current.removeJob(jobId);
             throw new Error("Upload cancelled by user");
           }
 
@@ -873,13 +1233,15 @@ export default function Content({
 
   const waitForResume = async (jobId) => {
 
-    let currJob = jobsRef.current[jobId];
+    const currJobs = progressCompRef.current.getCurrentJobs();
+    let currJob = currJobs[jobId];
 
     if (!currJob) return;
 
     return new Promise((resolve) => {
       const checkStatus = () => {
-        currJob = jobsRef.current[jobId];
+        const tempJobs = progressCompRef.current.getCurrentJobs();
+        currJob = tempJobs[jobId];
         
         if (currJob.close) {
           resolve('closed');
@@ -901,7 +1263,8 @@ export default function Content({
     return totalSize;
   };
 
-  const getParentName = (tempName) => {
+  
+  const getParentName =   (tempName) => {
     let parentName = "";
 
     for (let i = 0; i < tempName.length && i < 10; i++) {
@@ -910,8 +1273,87 @@ export default function Content({
 
     return parentName;
   };
+  const uploadPaths = async (files, pathToId, parentPath) => {
+
+    for (let file of files) {
+
+        const {relativePath, fileName} = getRelativePath(file, parentPath);
+
+        if (!pathToId[relativePath]) {
+
+            const relativePathArr = relativePath.split("/");
+            
+            let parentId = null;
+
+            for (const folderName of relativePathArr) {
+              
+              if (folderName === '') continue;
+
+
+              const req = await retryFetch(`${apiUrl}/savePath`, {
+                  method: "POST",
+                  headers: {
+                      "Content-Type": "application/json",
+                  },
+                  credentials: "include",
+                  body: JSON.stringify({ folder: folderName, parentIdToSend: parentId, currentFolderId: folderIdRef.current }),
+              }, 10000, 500);
+              
+              const res = await req.json();
+              
+              const { newParentId } = res.folderData;
+              
+
+              parentId = newParentId;
+              
+            }
+
+            pathToId[relativePath] = parentId;
+
+        }
+    }
+  };
+  
+  const getRelativePath = (file, parentPath) => {
+      const pathArr = file.webkitRelativePath.split("/");
+      const len = pathArr.length;
+      
+      let path = [];
+      path.push(parentPath);
+      for (let i = 0; i < len-1; i++) {
+        const p = pathArr[i];
+        path.push(p);
+        path.push("/");
+      }
+      
+      let relativePath = path.join("");
+
+      return {relativePath: relativePath, fileName: pathArr[len-1]};
+  }
+  const compareFiles = (a, b) => {
+    // if (a.type && b.type) {
+    //     if (a.type !== b.type) {
+    //         return a.type === 'FOLDER' ? -1 : 1;
+    //     }
+    // }
+    
+    return a.name.localeCompare(b.name);
+  };
+  const conditionalPromise = (loadingRef, pollInterval = 100) => {
+    return new Promise(resolve => {
+      const checkCondition = () => {
+        if (!loadingRef.current) {
+          resolve();
+        } else {
+          setTimeout(checkCondition, pollInterval);
+        }
+      };
+      checkCondition();
+    });
+  };
 
   const uploadFolder = async (e) => {
+
       e.preventDefault();
       
       const form = e.target;
@@ -920,68 +1362,38 @@ export default function Content({
 
       let pathToId = {};
       let currSize = [0];
-
-
+      
+      const fileList = Array.from(form[0].files);
+      fileList.sort(compareFiles);
       const jobId = Date.now();
-
+      
       const tempName = form[0].files[0].webkitRelativePath.split("/")[0];
 
       const parentName = getParentName(tempName);
 
       const totalSize = getUploadSize(form[0].files);
       
-      addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
+      progressCompRef.current.addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
 
-      const parentPathReq = await fetch(`${apiUrl}/getParentPath`, {
+      const parentPathReq = await retryFetch(`${apiUrl}/getParentPath`, {
         method: "POST",
         headers: {"Content-Type":"application/json"},
         credentials: "include",
         body: JSON.stringify({folderId: folderId})
-      }); 
+      }, 10000, 500); 
+
       
       const tempParentPath = await parentPathReq.json();
 
       const parentPath = tempParentPath.parentPath ? tempParentPath.parentPath : "";
       
+      await uploadPaths(form[0].files, pathToId, parentPath);
 
-      for (let file of form[0].files) {
+      for (let file of fileList) {
         
-        
-        const pathArr = file.webkitRelativePath.split("/");
-        const len = pathArr.length;
-        
-        let path = [];
-        path.push(parentPath);
-        for (let i = 0; i < len-1; i++) {
-          const p = pathArr[i];
-          path.push(p);
-          path.push("/");
-        }
-
-        let relativePath = path.join("");
-          
-          
-        // ******* IMPORTANT ***********
-        if (!pathToId[relativePath]) {
-
-            const req = await fetch(`${apiUrl}/savePath`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                credentials: "include",
-                body: JSON.stringify({ relativePath: relativePath }),
-            });
-            const res = await req.json();
-            const { parentId, ultimateParentId } = res.parentIds;
-
-            pathToId[relativePath] = parentId;
-            
-            if (folderId && ultimateParentId === Number.parseInt(folderId)) {
-              setUpdateFiles((prev) => !prev);
-            } 
-
-        }
+       await conditionalPromise(isLoadingMoreRef);
+      
+       const fileData = getRelativePath(file, parentPath);
 
         // const req = await fetch(`${apiUrl}/checkFileStatus`, {
         //   method: "POST",
@@ -994,16 +1406,13 @@ export default function Content({
 
         // const fileStatus = await req.json();
         
-        const metaData = {parentId: pathToId[relativePath], fileName: pathArr[len-1]};
-         await uploadInChunks(file, relativePath, jobId, currSize, totalSize, metaData);
-          
-        
-        if (folderId && pathToId[relativePath] === Number.parseInt(folderId)) {
-          setUpdateFiles((prev) => !prev);
-        }
+        const metaData = {parentId: pathToId[fileData.relativePath], fileName: fileData.fileName};
+        await uploadInChunks(file, fileData.relativePath, jobId, currSize, totalSize, metaData);
+      
+
         
 
-        updateJob({
+        progressCompRef.current.updateJob({
             jobId: jobId,
             data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
         });
@@ -1011,11 +1420,10 @@ export default function Content({
         file = null;
       }
 
-      removeJob(jobId);
+      progressCompRef.current.removeJob(jobId);
   };
 
   const uploadInChunks = async (file, relativePath, jobId, currSize, totalSize, metaData) => {
-    
 
     let currChunkSize = 1 * 1024 * 1024; 
     let prevEnd = 0;
@@ -1027,6 +1435,8 @@ export default function Content({
     //   }
     //   prevEnd = fileStatus.chunkStart === "" ? 0 : Number.parseInt(fileStatus.chunkStart);
     // }
+
+    let fileRes = null;
   
     while (prevEnd < file.size) {
 
@@ -1040,16 +1450,23 @@ export default function Content({
   
       const formData = new FormData();
       
-      formData.append("relative_path", relativePath);
-      formData.append("filename", file.name);
-      formData.append("meta_data", JSON.stringify(metaData));
-      formData.append("chunk_data", JSON.stringify({start: `${start}`, end: `${end}`}));
-      formData.append("chunk", chunk);      
+      const chunkData = {
+        relativePath: relativePath,
+        fileName: file.name,
+        chunkMetaData: JSON.stringify(metaData),
+        chunkData: JSON.stringify({start: `${start}`, end: `${end}`}),
+        lastChunk: end === file.size,
+        mimeType: file.type
+      };
+
+
+      formData.append("meta_data", JSON.stringify(chunkData));
+      formData.append("chunk", chunk);     
       
   
       const startTime = performance.now();
 
-      const response = await retryFetch(`${apiUrl}/uploadChunk`, {
+      const request = await retryFetch(`${apiUrl}/uploadChunk`, {
         method: 'POST',
         body: formData,
         credentials: 'include'
@@ -1063,94 +1480,24 @@ export default function Content({
       currChunkSize = determineDynamicChunkSize(currentSpeed);
       
 
-      if (!response.ok) {
+      if (!request.ok) {
         // Handle error (could retry or abort)
         return;
       }
-  
-
-      updateJob({
+      const res = await request.json();
+      
+      fileRes = res.file;
+      
+      progressCompRef.current.updateJob({
         jobId: jobId,
         data: { percentage: Math.round(currSize[0] * 100 / totalSize) },
       });
 
     }
+
+    return fileRes;
   };
 
-  const addJob = (job) => {
-    setJobs(prevJobs => ({
-      ...prevJobs,
-      [job.jobId]: job
-    }));
-  };
-
-  const deleteJob = (jobId) => {
-    setJobs(prevJobs => {
-
-      const updatedJobs = { ...prevJobs };
-      delete updatedJobs[jobId];
-
-      return updatedJobs;
-    });
-  };
-  
-  const updateJob = (job) => {
-    setJobs(prevJobs => {
-      if (!prevJobs[job.jobId]) {
-        return prevJobs;
-      }
-      return {
-        ...prevJobs,
-        [job.jobId]: {
-          ...prevJobs[job.jobId],
-          data: {
-            ...prevJobs[job.jobId].data,
-            percentage: job.data.percentage,
-            pause: job.pause,
-            cancel: job.cancel
-          }
-        }
-      };
-    });
-  };
-  
-  const removeJob = (jobId) => {
-    setJobs(prevJobs => {
-      const newJobs = { ...prevJobs };
-      delete newJobs[jobId];
-      return newJobs; 
-    });
-
-  };
-
-  const handlePause = (job) => {
-
-    setJobs(prevJobs => {
-      if (!prevJobs[job.jobId]) {
-        return prevJobs;
-      }
-  
-      return {
-        ...prevJobs,
-        [job.jobId]: { ...prevJobs[job.jobId], pause: !prevJobs[job.jobId].pause }
-      };
-    });
-
-
-  };
-
-  const handleClose = (job) => {
-    setJobs(prevJobs => {
-      if (!prevJobs[job.jobId]) {
-        return prevJobs;
-      }
-  
-      return {
-        ...prevJobs,
-        [job.jobId]: { ...prevJobs[job.jobId], close: true }
-      };
-    });
-  };
 
   const handleDownload = () => {
 
@@ -1198,7 +1545,7 @@ export default function Content({
       fileId = selFiles[0];
     }
     
-    const file = files.find((f) => f.id === Number.parseInt(fileId));
+    const file = files[Number.parseInt(fileId)];
     
     setFileContextWindow({visible: false, x:0, y:0});
     if (file) setNewName(file.name);
@@ -1216,7 +1563,8 @@ export default function Content({
     
     if (selectedFiles) {
       for (const key of Object.keys(selectedFiles)) {
-        filesToDelete.push(Number.parseInt(key));
+        const numKey = Number.parseInt(key);
+        filesToDelete.push(numKey);
       }
     }
     
@@ -1227,11 +1575,35 @@ export default function Content({
       body: JSON.stringify(filesToDelete)
     });
     
-    const res = await req.json();
+    if (!req.ok) {
+      const res = await req.json();
+      alert(res.errors);
+      return;
+    }
+    const folderValues = files.folders.fileValues;
+    const fileValues = files.files.fileValues;
+
+    const newFolders = files.folders.clone();
+    const newFiles = files.files.clone();
     
-    setFiles((prev) => 
-      prev.filter((file) => !filesToDelete.includes(file.id))
-    );
+    for (const fileId of filesToDelete) {
+      const file = fileValues[fileId] || folderValues[fileId];
+
+      if (file) {
+        
+        if (file.type === 'FOLDER') {
+          newFolders.delete(file);
+        } else {
+          newFiles.delete(file);
+        }
+        delete fileValues[fileId];
+      }
+
+    }
+    newFolders.fileValues = fileValues;
+    newFiles.fileValues = fileValues;
+    
+    setFiles({folders: newFolders, files: newFiles});
 
     setFileContextWindow({visible: false, x: 0, y: 0});
     
@@ -1288,25 +1660,37 @@ export default function Content({
 
     }
 
-    addJob({jobId: jobId, action: type, data: {totalFiles: totalFiles}});
+    progressCompRef.current.addJob({jobId: jobId, action: type, data: {totalFiles: totalFiles}});
     
     setFileContextWindow({visible: false, x:0, y:0});
+    const filesSelected = type && type === "copy" ? filesCopied : filesCut;
 
-    const req = await fetch(`${apiUrl}/paste`, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      credentials: "include",
-      body: JSON.stringify({files: type && type === "copy" ? filesCopied : filesCut, path: pathId, operationType: type})
-    });
-    
-    setUpdateFiles(prev => !prev);
 
-    if (!req.ok) {
-      const error = await req.json();
-      alert(error.message);
+    for (const fileId of filesSelected) {
+
+      const req = await fetch(`${apiUrl}/paste`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "include",
+        body: JSON.stringify({file: fileId, path: pathId, operationType: type})
+      });
+
+      const res = await req.json();
+
+      if (!req.ok) { 
+        alert(res.message);
+        progressCompRef.current.removeJob(jobId);
+        setFilesCopied([]);
+        setFilesCut([]);
+        return;
+      }
+      
+      
     }
     
-    removeJob(jobId);
+    setFilesCopied([]);
+    setFilesCut([]);
+    progressCompRef.current.removeJob(jobId);
     
   };
 
@@ -1323,12 +1707,22 @@ export default function Content({
       body: JSON.stringify({parentId: tempFolderId, folderName: folderName})
     });
 
+    const res = await req.json();
     if (!req.ok) {
-      const error = await req.json();
-      alert(error.message);
+      alert(res.message);
     } else {
+      if (res.folder) {
+        const newFolders = files.folders.clone();
+        const newFiles = files.files.clone();
+        newFolders.add(res.folder);
+        setFiles({folders: newFolders, files: newFiles});
+      }
       setNewFolder(false);
     }
+  };
+  
+  const handleSort = (newSortOptions) => {
+    setSortOptions(newSortOptions);
   };
 
   return (
@@ -1353,48 +1747,34 @@ export default function Content({
       />
       <Files files-context-window="true" displayMode={displayMode} ref={fileContainerRef} onContextMenu={(e) => handleRightClick(e, null)} onMouseDownCapture={(e) => handleMouseDown(e)}>
           <FolderContainer>
-            {files.map((file) => (
-              <FileContainer
-                key={file.id}
-                data-file-id={file.id}
-                data-file-type={file.type}
-              >
+          {memoizedFileValues.map((file, index) => {
+            // console.log(index);
+            const isSelected = !!(selectedFiles && selectedFiles[file.id]);
+            const isBeingRenamed = shouldRename === file.id;
 
-                <FileTempContainer>
-                  <FileImage file-image-id={file.id} src={file.type === "FOLDER" ? folderImage : fileImage} 
-                  alt="file or folder image"
-                  onClick={(e) => handleSelected(e, file.id)} 
-                  onContextMenu={(e) => handleRightClick(e, file.id)}
-                  onDoubleClick={() => handleClick(file)}
-                  onMouseEnter={() => handleHighlight(file.id, true)} onMouseLeave={() => handleHighlight(file.id, false)}  
-                  />
-                  {shouldRename !== file.id ? 
-                    <FileName 
-                    file-name-id={file.id} 
-                    style={
-                    {backgroundColor: ((selectedFiles && selectedFiles[file.id])) ? "rgba(102, 51, 153, 0.4)" : 
-                    (file.id === highlight.fileId && highlight.shouldHighlight) ? "rgba(102, 51, 153, 0.2)" : "transparent"}
-                    }
-                    onClick={(e) => handleSelected(e, file.id)} 
-                    onContextMenu={(e) => handleRightClick(e, file.id)}
-                    onDoubleClick={() => handleClick(file)}
-                    onMouseEnter={() => handleHighlight(file.id, true)} onMouseLeave={() => handleHighlight(file.id, false)}  
-                    >
-                    {file.name}
-                    </FileName>
-                    :
-                    <TextArea 
-                    text-area-id={file.id}
-                    onMouseDownCapture={(e) => e.stopPropagation()}
-                    onClick={(e) => e.stopPropagation()} 
-                    onDoubleClick={(e) => e.stopPropagation()}
-                    onContextMenu={(e) => e.stopPropagation()}
-                    value={newName} onChange={(e) => handleNameChange(e)}
-                    autoFocus={true}/>
-                  }
-                </FileTempContainer>
-              </FileContainer>
-          ))}
+            let fileImagePreview = `${apiUrl}${file.previewUrl}`;
+
+
+            return (
+              <FileItem
+                key={file.id}
+                file={file}
+                assignRef={assignFileRef}
+                index={index}
+                isSelected={isSelected}
+                isBeingRenamed={isBeingRenamed}
+                displayMode={displayMode}
+                newNameForRename={isBeingRenamed ? newName: ""} // Pass newName, FileItem will use if isBeingRenamed
+                folderImage={folderImage}
+                fileImage={fileImagePreview}
+                onFileClick={(e) => handleClick(e)}
+                onFileSelect={(e) => handleSelected(e, file.id)}
+                onFileContextMenu={(e) => handleRightClick(e, file.id)}
+                onNameChange={handleNameChange}
+                defaultImage={fileImage}
+              />
+            );
+        })}
           {fileContextWindow.visible && 
           <ContextWindow
             onContextMenu={(e) => {
@@ -1415,29 +1795,212 @@ export default function Content({
             filesCut={filesCut}
             displayMode={displayMode}
             typeClicked={typeClicked}
+            handleSort={handleSort}
           />
           }
           </FolderContainer>
-        <SelectionBox selectionBox={selectionBox}/>
-      
+
+        <SelectionBox ref={selectionBoxRef} itemRefs={itemRefs} grid={gridRef} />
       </Files>
-      {Object.keys(jobs).length > 0 && <ProgressComp 
-          displayMode={displayMode} minimize={minimize} menuUp={menuUp} menuDown={menuDown} handleMinimize={handleMinimize} jobs={jobs} handleClose={handleClose} handlePause={handlePause}
+      <ProgressComp 
+          ref={progressCompRef} displayMode={displayMode} menuUp={menuUp} menuDown={menuDown} 
       />
-      }
+      
     </ContentContainer>
   );
 }
 
+const FileItem = memo(function FileItem({
+  file,
+  assignRef,
+  index,
+  isSelected,
+  isBeingRenamed,
+  displayMode,
+  newNameForRename, // Current value for the rename input
+  folderImage,
+  fileImage,
+  onFileClick, // Handler for double click / open
+  onFileSelect, // Handler for single click / selection
+  onFileContextMenu, // Handler for right click
+  onNameChange, // Handler for textarea change during rename
+  defaultImage
+}) {
+  const [shouldHighlight, setShouldHighlight] = useState(false);
 
-function ProgressComp({ displayMode, minimize, menuUp, menuDown, handleMinimize, jobs, handleClose, handlePause }) {
 
+  const handleSelect = (e) => {
+    onFileSelect(e, file.id);
+  };
+
+  const handleContextMenu = (e) => {
+    onFileContextMenu(e, file.id);
+  };
+
+  const handleDoubleClick = () => {
+    onFileClick(file);
+  };
+
+  const handleMouseEnter = () => {
+    setShouldHighlight(true);
+  };
+
+  const handleMouseLeave = () => {
+    setShouldHighlight(false);
+  };
+
+  const handeImageError = (e) => {
+    e.target.onerror = null; 
+    e.target.src = defaultImage;
+  };
+
+  return (
+    <FileContainer // Pass index to assignRef
+      data-file-id={file.id}
+      data-file-type={file.type}
+      ref={(el) => assignRef(el, file.id)}
+    >
+      <FileTempContainer>
+        <FileImage
+          file-image-id={file.id}
+          src={file.type === "FOLDER" ? folderImage : fileImage}
+          alt="file or folder image"
+          onClick={handleSelect}
+          onContextMenu={handleContextMenu}
+          onDoubleClick={handleDoubleClick}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onError={handeImageError}
+        />
+        {isBeingRenamed ? (
+          <TextArea
+            displayMode={displayMode}
+            text-area-id={file.id}
+            onMouseDownCapture={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.stopPropagation()}
+            value={newNameForRename} // Use the specific prop
+            onChange={onNameChange} // Pass the specific handler
+            autoFocus={true}
+          />
+        ) : (
+          <FileName
+            file-name-id={file.id}
+            style={{
+              backgroundColor: isSelected
+                ? "rgba(102, 51, 153, 0.4)"
+                : shouldHighlight
+                ? "rgba(102, 51, 153, 0.2)"
+                : "transparent",
+            }}
+            onClick={handleSelect}
+            onContextMenu={handleContextMenu}
+            onDoubleClick={handleDoubleClick}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            {file.name}
+          </FileName>
+        )}
+      </FileTempContainer>
+    </FileContainer>
+  );
+});
+
+
+function ProgressComp({ ref, displayMode, menuUp, menuDown}) {
+
+  const [jobs, setJobs] = useState({});
+  const [minimize, setMinimize] = useState();
+  const jobsRef = useRef(jobs);
+
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+  
+  const handleMinimize = () => {
+    setMinimize(prev => !prev);
+  };
+
+  const handlePause = (job) => {
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+  
+      return {
+        ...prevJobs,
+        [job.jobId]: { ...prevJobs[job.jobId], pause: !prevJobs[job.jobId].pause }
+      };
+    });
+  };
+
+  const handleClose = (job) => {
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+  
+      return {
+        ...prevJobs,
+        [job.jobId]: { ...prevJobs[job.jobId], close: true }
+      };
+    });
+  };
+  const addJob = (job) => {
+    setJobs(prevJobs => ({
+      ...prevJobs,
+      [job.jobId]: job
+    }));
+  };
 
   
+  const updateJob = (job) => {
+    setJobs(prevJobs => {
+      if (!prevJobs[job.jobId]) {
+        return prevJobs;
+      }
+      return {
+        ...prevJobs,
+        [job.jobId]: {
+          ...prevJobs[job.jobId],
+          data: {
+            ...prevJobs[job.jobId].data,
+            percentage: job.data.percentage,
+            pause: job.pause,
+            cancel: job.cancel
+          }
+        }
+      };
+    });
+  };
+  
+  const removeJob = (jobId) => {
+    setJobs(prevJobs => {
+      const newJobs = { ...prevJobs };
+      delete newJobs[jobId];
+      return newJobs; 
+    });
+
+  };
+
+  useImperativeHandle(ref, () => ({
+    getState: () => jobs,
+    updateState: (newState) => setJobs(newState),
+    addJob: (newJob) => addJob(newJob),
+    updateJob: (job) => updateJob(job),
+    removeJob: (jobId) => removeJob(jobId),
+    getCurrentJobs: () => jobsRef.current
+  }));
+
+  if (Object.keys(jobs).length <= 0) return (<></>);
+
   return (
     <ProgressContainer>
       <MinimizeContainer displayMode={displayMode}>
-        <Minimize displayMode={displayMode} onClick={handleMinimize}>{minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
+        <Minimize displayMode={displayMode} onClick={handleMinimize}>{
+        minimize ? <StyledMenuArrow src={menuUp}></StyledMenuArrow> : <StyledMenuArrow src={menuDown}></StyledMenuArrow>}</Minimize>
       </MinimizeContainer>
       {
         Object.keys(jobs).map((jobId) => {
@@ -1497,106 +2060,310 @@ function ProgressComp({ displayMode, minimize, menuUp, menuDown, handleMinimize,
   );
 }
 
-function SelectionBox({ selectionBox }) {
-  return (
-    selectionBox && <div
-    style={{
-      position: 'absolute',
-      left: selectionBox.x,
-      top: selectionBox.y,
-      width: selectionBox.width,
-      height: selectionBox.height,
-      border: '1px solid rgba(255,255,255,0.2)',
-      backgroundColor: 'rgba(134, 69, 199, 0.2)',
-    }}
-  />
-  );
-};
+function SelectionBox({ ref, itemRefs, grid }) {
+  const [selectionBox, setSelectionBox] = useState(null);
+  
+  const selectedItemsRef = useRef(new Set());
 
+  useEffect(() => {
+
+    const currentFrameSelected = new Set();
+    
+    if (selectionBox) {
+
+      const startRow = Math.floor(selectionBox.y / height);
+      const startCol = Math.floor(selectionBox.x / width);
+      const endRow = Math.floor((selectionBox.y + selectionBox.height) / height);
+      const endCol = Math.floor((selectionBox.x + selectionBox.width) / width);
+
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          const key = `${r}_${c}`;
+          if (grid.current[key]) {
+            if (
+              rectanglesIntersect(grid.current[key]['image'], selectionBox) ||
+              rectanglesIntersect(grid.current[key]['name'], selectionBox)
+            ) {
+              const fileId = grid.current[key].fileId;
+              currentFrameSelected.add(fileId);
+            }
+          }
+        }
+      }
+    }
+
+
+    const previouslySelected = selectedItemsRef.current;
+
+    previouslySelected.forEach(fileId => {
+      if (!currentFrameSelected.has(fileId)) {
+        if (itemRefs.current[fileId]) {
+            itemRefs.current[fileId].firstChild.style.backgroundColor = ''; 
+        }
+      }
+    });
+
+
+    currentFrameSelected.forEach(fileId => {
+      if (!previouslySelected.has(fileId)) {
+        if (itemRefs.current[fileId]) {
+            itemRefs.current[fileId].firstChild.style.backgroundColor = "rgba(102, 51, 153, 0.4)";
+        }
+      }
+    });
+
+    selectedItemsRef.current = currentFrameSelected;
+
+  }, [selectionBox, grid, itemRefs.current]);
+
+  const rectanglesIntersect = (rectA, rectB) => {
+    if (!rectA || !rectB) return false;
+    return (
+      rectA.x < rectB.x + rectB.width &&
+      rectA.x + rectA.width > rectB.x &&
+      rectA.y < rectB.y + rectB.height &&
+      rectA.y + rectA.height > rectB.y
+    );
+  };
+
+  useImperativeHandle(ref, () => ({
+    getState: () => selectionBox,
+    updateState: (newState) => setSelectionBox(newState),
+    getSelectedItems: () => {
+      const temp = {};
+      for (const id of selectedItemsRef.current) {
+        temp[id] = { fileId: id };
+      }
+      return temp;
+    }
+  }));
+
+  return (
+    selectionBox && (
+      <div
+        style={{
+          position: 'absolute',
+          left: selectionBox.x,
+          top: selectionBox.y,
+          width: selectionBox.width,
+          height: selectionBox.height,
+          border: '1px solid rgba(255,255,255,0.2)',
+          backgroundColor: 'rgba(134, 69, 199, 0.2)',
+          pointerEvents: 'none', // Important for allowing clicks to pass through
+        }}
+      />
+    )
+  );
+}
 const FileContextWindow = styled.div`
   position: fixed; 
   top: ${props => props.y}px;
   left: ${props => props.x}px;
   background-color: ${props => props.displayMode ? "#252424" : "#dedede"};
   color: ${props => props.displayMode ? "white" : "black"};
-  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
   z-index: 1000;
   display: flex;
-  padding: 0.3vw;
   flex-direction: column;
-  border-radius: 15px;
   font-size: 0.7vw;
 `;
-
 const ContextItemWrapper = styled.div`
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 0.5vw;
   padding: 0.5vw;
-`
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap; 
+  
+  &:hover {
+    background-color:  ${props => props.displayMode ? "#454444" : "#eee"};
+  }
+`;
+
+
 const StyledContextImg = styled.img`
   width: 1.3vw;
-`
+`;
 
 const ClickableP = styled.p`
-  cursor: pointer;
-`
+  margin: 0; 
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+`;
 
-function ContextWindow({ fileContextWindow, handleNewFolder, handleDownload, handleRename, handleDelete, selectedFiles, handleCut, handleCopy, handlePaste, filesCopied, filesCut, displayMode, typeClicked }) {
+
+const SubMenuItem = styled.div`
+  background-color: ${props => props.displayMode ? "#252424" : "#dedede"};
+  color: ${props => props.displayMode ? "white" : "black"};
+  display: flex;
+  gap: 1.5vw;
+  position: relative;
+  height: 100%;
+  padding-left: 0.5vw;
+  padding-right: 0.5vw;
+  &:hover {
+    background-color:  ${props => props.displayMode ? "#454444" : "#eee"};
+  }
+`;
+
+const SortFieldsContainer = styled.div`
+  position: absolute;
+  left: 100%;
+  z-index: 10;
+  height: 100%;
+`;
+
+const SortOptionsContainer = styled.div`
+  position: absolute;
+  left: 100%;
+  background-color: ${props => props.displayMode ? "#252424" : "#dedede"};
+  color: ${props => props.displayMode ? "white" : "black"};
+  z-index: 20;
+  height: 200%;
+`;
+
+const Arrow = styled.span`
+  margin-left: auto;
+  padding-left: 1vw;
+  color: #555;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+`;
+
+const SortOptionsWrapper = styled.div`
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5vw;
+  padding-left: 0.5vw;
+  padding-right: 0.5vw;
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap; 
+  height: 50%;
+  
+  &:hover {
+    background-color:  ${props => props.displayMode ? "#454444" : "#eee"};
+  }
+`;
+
+function ContextWindow({ 
+  fileContextWindow, handleNewFolder, handleDownload, handleRename, 
+  handleDelete, selectedFiles, handleCut, handleCopy, 
+  handlePaste, filesCopied, filesCut, displayMode, typeClicked, handleSort 
+}) {
+  
+  const [sortFieldsState, setSortFieldsState] = useState(false);
+  const [sortOptionsState, setSortOptionsState] = useState(false);
 
   const { x, y } = fileContextWindow;
+
+  const showSortFields = () => {
+    setSortFieldsState(true);
+  };
+
+  const hideSortFields = () => {
+    setSortFieldsState(false);
+  };
+
+  const showSortOptions = () => {
+    setSortOptionsState(true);
+  }; 
+
+  const hideSortOptions = () => {
+    setSortOptionsState(false);
+  };
 
   return (
     <FileContextWindow displayMode={displayMode} x={x} y={y} data-context-window="true" >
       {
-      (!typeClicked || typeClicked.type === "FOLDER") && <ContextItemWrapper>
+      (!typeClicked || typeClicked.type === "FOLDER") && <ContextItemWrapper displayMode={displayMode} onClick={handleNewFolder}>
         <StyledContextImg src={newImg}></StyledContextImg>
-        <ClickableP onClick={handleNewFolder}>New Folder</ClickableP>
+        <ClickableP>New Folder</ClickableP>
       </ContextItemWrapper>
+      }      
+      {
+        (!typeClicked) && (
+
+          <ContextItemWrapper displayMode={displayMode} onMouseEnter={showSortFields} onMouseLeave={hideSortFields}>
+            <StyledContextImg src={sortBy}></StyledContextImg>
+            <ClickableP>Sort by</ClickableP>
+            <Arrow>{'>'}</Arrow>
+
+            {sortFieldsState && (
+              <SortFieldsContainer>
+                <SubMenuItem  displayMode={displayMode} onMouseEnter={showSortOptions} onMouseLeave={hideSortOptions}>
+                  <StyledContextImg src={nameSort}></StyledContextImg>
+                  <ClickableP>Name</ClickableP>
+                  <Arrow>{'>'}</Arrow>
+
+                  {sortOptionsState && (
+                    <SortOptionsContainer displayMode={displayMode}>
+                      <SortOptionsWrapper displayMode={displayMode}>
+                        <StyledContextImg src={sortAsc}></StyledContextImg>
+                        <ClickableP onClick={() => handleSort({sortBy: "name", sortDir: "asc"})}>Ascending</ClickableP>
+                      </SortOptionsWrapper>
+                       <SortOptionsWrapper displayMode={displayMode}>
+                        <StyledContextImg src={sortDesc}></StyledContextImg>
+                        <ClickableP onClick={() => handleSort({sortBy: "name", sortDir: "desc"})}>Descending</ClickableP>
+                      </SortOptionsWrapper>
+                    </SortOptionsContainer>
+                  )}
+                  
+                </SubMenuItem>
+
+              </SortFieldsContainer>
+            )}
+          </ContextItemWrapper>
+        )
       }
 
       {
-      typeClicked && <ContextItemWrapper>
+      typeClicked && <ContextItemWrapper displayMode={displayMode} onClick={handleDownload}>
         <StyledContextImg src={downloadImg}></StyledContextImg>
-        <ClickableP onClick={handleDownload}>Download</ClickableP>
+        <ClickableP>Download</ClickableP>
       </ContextItemWrapper>
       }
 
       {
-      typeClicked && <ContextItemWrapper>
+      typeClicked && <ContextItemWrapper displayMode={displayMode} onClick={handleCut}>
         <StyledContextImg src={cutImg}></StyledContextImg>
-        <ClickableP onClick={handleCut}>Cut</ClickableP>
+        <ClickableP>Cut</ClickableP>
       </ContextItemWrapper>
       }
 
       {
-      typeClicked && <ContextItemWrapper>
+      typeClicked && <ContextItemWrapper displayMode={displayMode} onClick={handleCopy}>
         <StyledContextImg src={copyImg}></StyledContextImg>
-        <ClickableP onClick={handleCopy}>Copy</ClickableP>
+        <ClickableP>Copy</ClickableP>
       </ContextItemWrapper>
       
       }
       {
       ((!typeClicked || typeClicked.type === "FOLDER") && ((filesCopied && filesCopied.length > 0) || (filesCut && filesCut.length > 0))) && 
-      <ContextItemWrapper>
+      <ContextItemWrapper displayMode={displayMode} onClick={handlePaste}>
         <StyledContextImg src={pasteImg}></StyledContextImg>
-        <ClickableP onClick={handlePaste}>Paste</ClickableP>
+        <ClickableP>Paste</ClickableP>
       </ContextItemWrapper>
       }
 
       {
       (typeClicked && (selectedFiles && Object.keys(selectedFiles).length === 1)) && 
-      <ContextItemWrapper>
+      <ContextItemWrapper displayMode={displayMode} onClick={handleRename}>
         <StyledContextImg src={renameImg}></StyledContextImg>
-        <ClickableP onClick={handleRename}>Rename</ClickableP>
+        <ClickableP>Rename</ClickableP>
       </ContextItemWrapper>
       }
 
       {
-      typeClicked && <ContextItemWrapper>
+      typeClicked && <ContextItemWrapper displayMode={displayMode} onClick={handleDelete}>
         <StyledContextImg src={deleteImg}></StyledContextImg>
-        <ClickableP onClick={handleDelete}>Delete</ClickableP>
+        <ClickableP>Delete</ClickableP>
       </ContextItemWrapper>
       }
     </FileContextWindow>

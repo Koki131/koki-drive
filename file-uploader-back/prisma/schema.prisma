@@ -37,7 +37,8 @@ model File {
   chunkStart String @default("")
   chunkEnd   String @default("")
 
-  totalSize  Int? 
+  previewUrl String @default("")
+  mimeType   String @default("")
   
   @@index([parentId, name])
   @@unique([parentId, name, type])
@@ -51,6 +52,6 @@ model Session {
 }
 
 enum FileType {
-  FILE
   FOLDER
+  FILE
 }

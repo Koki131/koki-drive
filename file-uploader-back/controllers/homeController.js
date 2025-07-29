@@ -11,14 +11,30 @@ const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
 const archiver = require('archiver');
+const previewQueue = require('../queues/queue');
+const IORedis = require('ioredis');
 require('dotenv').config()
 
+const redisPublisher = new IORedis({ host: 'localhost', port: 6379 });
 
 const uploadPath = process.env.UPLOAD_PATH;
 
 const savePath = async (req, res) => {
 
   const folderData = await saveFolderStructure(req.body.folder, req.body.parentIdToSend, res.locals.currentUser, req.body.currentFolderId);
+
+  if (folderData && folderData.folder) {
+    const channel = `user-notifications:${res.locals.currentUser.id}`;
+    const payload = JSON.stringify({
+        event: 'file-transfer',
+        folder: folderData.folder,
+        status: 'success'
+    });
+
+    await redisPublisher.publish(channel, payload);
+  }
+  
+
 
   return res.status(200).json({ folderData: folderData });
 };
@@ -59,20 +75,27 @@ const checkFileStatus = async (req, res) => {
 const uploadChunk = async (req, res) => {
 
   const bb = busboy({ headers: req.headers });
-  let fileName, chunkData, relativePath, chunkMetaData;
+  let metaData;
 
-  bb.on('field', (name, value) => {
-    if (name === 'relative_path') relativePath = value;
-    if (name === 'filename') fileName = value;
-    if (name === 'meta_data') chunkMetaData = value;
-    if (name === 'chunk_data') chunkData = value;
+  bb.on('field', (name, value) => {    
+    if (name === 'meta_data') metaData = value;
   });
 
   bb.on('file', (fieldname, file, info) => {
-    const finalPath = `${uploadPath}${res.locals.currentUser.id}/${relativePath}`;
 
+    const { relativePath, fileName, chunkMetaData, chunkData, lastChunk, mimeType } = JSON.parse(metaData);
+
+    
+    const finalPath = `${uploadPath}${res.locals.currentUser.id}/${relativePath}`;
+    const basePreviewPath = `/previews/${res.locals.currentUser.id}/${relativePath}`;
+    const previewPath = `${uploadPath}previews/${res.locals.currentUser.id}/${relativePath}`;
+    
+    
     fs.mkdirSync(finalPath, { recursive: true });
+
     const finalFilePath = path.join(finalPath, fileName);
+    const finalBasePreviewPath = path.join(basePreviewPath, fileName);
+    const finalPreviewPath = path.join(previewPath, fileName);
 
     const buffers = [];
     file.on('data', (data) => buffers.push(data));
@@ -103,14 +126,20 @@ const uploadChunk = async (req, res) => {
                 console.error('Error creating final file:', createErr);
                 return res.status(500).json({ error: 'Error opening final file.' });
               }
-              writeChunk(fdCreated, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser, res);
+              writeChunk(
+                fdCreated, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser, 
+                res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+              );
             });
           } else {
             console.error('Error opening final file:', openErr);
             return res.status(500).json({ error: 'Error opening final file.' });
           }
         } else {
-          writeChunk(fd, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser, res);
+          writeChunk(
+            fd, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser,
+            res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+            );
         }
       });
     });
@@ -131,32 +160,67 @@ const uploadChunk = async (req, res) => {
 };
 
 
-const writeChunk = (fd, chunkBuffer, startOffset, chunkMetaData, chunkData, user, res) => {
+const writeChunk = (
+  fd, chunkBuffer, startOffset, chunkMetaData, chunkData, 
+  user, res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+) => {
   fs.write(fd, chunkBuffer, 0, chunkBuffer.length, startOffset, (writeErr, written) => {
     if (writeErr) {
       console.error('Error writing chunk to final file:', writeErr);
       fs.close(fd, () => {});
       return res.status(500).json({ error: 'Error writing chunk.' });
     }
-    fs.close(fd, (closeErr) => {
+    fs.close(fd, async (closeErr) => {
       if (closeErr) {
         console.error('Error closing final file:', closeErr);
         return res.status(500).json({ error: 'Error closing final file.' });
       }
+      
+      
       // Update metadata after successfully writing the chunk.
-      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user)
-        .then((file) => res.status(200).json({ file: file, success: true }))
+      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user, mimeType)
+        .then(async (file) => {
+
+          
+          if (lastChunk) {
+            const channel = `user-notifications:${user.id}`;
+            const payload = JSON.stringify({
+                event: 'file-transfer',
+                file: file,
+                status: 'success'
+            });
+    
+            await redisPublisher.publish(channel, payload);
+            
+            if (mimeType.startsWith('image/') || mimeType.startsWith('video/')) {
+              await previewQueue.add('generate', {
+                user: user,
+                fileId: file.id,
+                filePath: finalFilePath,
+                previewPath: previewPath,
+                finalPreviewPath: finalPreviewPath,
+                mimeType: mimeType,
+                basePreviewPath: finalBasePreviewPath
+              });
+    
+            } 
+          }
+          res.status(200).json({ file: file, success: true })
+
+        })
         .catch((err) => {
           console.error('Error updating metadata:', err);
           res.status(500).json({ error: 'Metadata update failed' });
         });
+
+        
     });
   });
 };
 
-const updateUploadMeta = async (chunkMetaData, chunkData, user) => {
+const updateUploadMeta = async (chunkMetaData, chunkData, user, mimeType) => {
   
-  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user);
+  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user, mimeType);
   
 };
 
@@ -199,9 +263,9 @@ const rename = async (req, res) => {
 
   const newFilename = name + extension;
 
-  const newPath = await renameFile(fileId, newFilename, userUploadPath);
+  const renamedFile = await renameFile(fileId, newFilename, userUploadPath);
 
-  const fullNewPath = newPath ? newPath[0] : null;
+  const fullNewPath = renamedFile ? renamedFile.fullPath[0] : null;
   
   if (!fullNewPath) return res.status(400).json({ message: 'Name already exists' });
 
@@ -221,7 +285,7 @@ const rename = async (req, res) => {
   
 
   
-  return res.status(200).json({message: 'Rename success'});
+  return res.status(200).json({renamedFile: renamedFile.file});
 
 };
 
@@ -234,8 +298,6 @@ const deleteFiles = async (req, res) => {
 
   const filePaths = await getFullPaths(filesToDelete, userUploadPath);
 
-  console.log(filePaths);
-  
   const errors = [];
 
   for (const file of filePaths) {
@@ -482,8 +544,6 @@ const paste = async (req, res) => {
       if (operationType === "copy") {
         fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
       } else {
-        console.log(srcItemFileSystemPath, destItemFileSystemPath);
-        
         fs.rename(srcItemFileSystemPath, destItemFileSystemPath, () => {});
       }
       
@@ -493,7 +553,16 @@ const paste = async (req, res) => {
       return res.status(500).json({ message: `Failed to paste file '${fileToCopy.name}': ${error.message}` });
   }
   
-  
+  const channel = `user-notifications:${res.locals.currentUser.id}`;
+  const payload = JSON.stringify({
+      event: 'file-transfer',
+      filePasted: filePastedTemp,
+      status: 'success'
+  });
+
+  await redisPublisher.publish(channel, payload);
+
+
   return res.status(200).json({ message: "File pasted successfully.", filePasted: filePastedTemp });
 };
 
@@ -526,7 +595,8 @@ const getFilesByParent = async (req, res) => {
 
   const { parent, take, cursor: cursorStr } = req.query;
   const cursor = cursorStr ? JSON.parse(cursorStr) : null;
-    
+
+  
   const result = await queryFilesByParent(req.user.id, parent, cursor, take);
   
   return res.status(200).json({result: result});
@@ -546,6 +616,80 @@ const handleSearchConnection = async (req, res) => {
 
     return res.status(400).json({ message: "Bad query" });
   }
+};
+
+const getImagePreview = (req, res) => {
+
+  const userId = req.params.userId;
+
+
+  const filePath = req.params[0];
+
+  if (!userId || !filePath) {
+      return res.status(400).send('Invalid path');
+  }
+
+  const physicalPath = path.join(uploadPath, 'previews', userId, filePath);
+
+  
+  res.sendFile(physicalPath, (err) => {
+    if (err) {
+      console.error(`Error sending file: ${physicalPath}`, err);
+      res.status(404).send('Preview not found');
+    }
+  });
+};
+
+const eventsUtil = (req, res) => {
+
+    
+    const userId = req.query.userId;
+    
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    console.log(`SSE client connected for user ${userId}`);
+
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Create a NEW Redis client for this specific connection to act as a subscriber.
+    // This is crucial because a subscriber client cannot run other commands.
+    const subscriber = new IORedis({ host: 'localhost', port: 6379 });
+    const channel = `user-notifications:${userId}`;
+
+    subscriber.subscribe(channel, (err, count) => {
+        if (err) {
+          console.error(`Failed to subscribe to Redis channel ${channel}`, err);
+          res.end();
+          return;
+        }
+        console.log(`Subscribed to ${count} channel(s). Listening for messages on ${channel}...`);
+    });
+
+    // When a message is received on the subscribed channel, send it to the client.
+    subscriber.on('message', (ch, message) => {
+        if (ch === channel) {
+          console.log(`Relaying message from Redis to user ${userId}:`, message);
+          res.write(`data: ${message}\n\n`);
+        }
+    });
+
+    // Send a heartbeat comment every 20 seconds to keep the connection alive
+    const heartbeatInterval = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 20000);
+
+    req.on('close', () => {
+        console.log(`SSE client disconnected for user ${userId}. Cleaning up.`);
+        clearInterval(heartbeatInterval);
+        subscriber.unsubscribe(channel);
+        subscriber.quit();
+    });
 };
 
 
@@ -612,5 +756,7 @@ module.exports = {
     deleteFiles,
     paste,
     createNewFolder,
-    handleSearchConnection
+    handleSearchConnection,
+    getImagePreview,
+    eventsUtil
 }

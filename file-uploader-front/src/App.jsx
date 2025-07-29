@@ -3,6 +3,8 @@ import './App.css'
 import styled from 'styled-components'
 import Header from './Header'
 import Content from './Content'
+import { BST } from '../util/BST'
+import { useParams } from 'react-router'
 
 const StyledAppContainer = styled.div`
   height: 100vh;
@@ -14,9 +16,11 @@ const StyledAppContainer = styled.div`
 
 function App() {
   const [isLoading, setIsLoading] = useState(false);
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState({folders: new BST(0), files: new BST(0)});
   const [updateFiles, setUpdateFiles] = useState(false);
-  const [calculatedInitialTake, setCalculatedInitialTake] = useState(0);
+  const nextCursor = useRef(null);
+  const calculatedInitialTake = useRef(null);
+  const lazyLoadStateRef = useRef("list");
   const fileContainerRef = useRef(null);
 
 
@@ -27,12 +31,12 @@ function App() {
         if (fileContainerRef.current) {
 
             const filesDiv = fileContainerRef.current;
-
+            
             const containerWidth = filesDiv.clientWidth;
             const containerHeight = filesDiv.clientHeight;
 
             const itemApproximateWidth = 100; 
-            const itemApproximateHeight = 100; 
+            const itemApproximateHeight = 120; 
 
             if (containerWidth > 0 && containerHeight > 0 && itemApproximateWidth > 0 && itemApproximateHeight > 0) {
                 const itemsPerRow = Math.max(1, Math.floor(containerWidth / itemApproximateWidth));
@@ -42,29 +46,28 @@ function App() {
                 const initialTake = itemsPerRow * (rowsToFill + bufferRows);
 
                 console.log(`Calculated initial take: ${initialTake} (Container H:${containerHeight}, W:${containerWidth}, Items/Row:${itemsPerRow}, RowsToFill:${rowsToFill})`);
-                setCalculatedInitialTake(initialTake);
+                calculatedInitialTake.current = initialTake;
             } else {
-                console.warn("Could not calculate initial take, dimensions not ready. Using default:", calculatedInitialTake);
+                console.warn("Could not calculate initial take, dimensions not ready. Using default:", calculatedInitialTake.current);
             }
             
         }
     }
 
     handleResize();
-    window.addEventListener("resize", handleResize);
-    window.addEventListener("resize", handleResize);
 
-    return () => {
-
-    }
-}, [calculatedInitialTake, fileContainerRef]);
+}, [fileContainerRef.current]);
 
   return (
     <StyledAppContainer>
       <Header files={files} setFiles={setFiles} isLoading={isLoading}
-       setIsLoading={setIsLoading} setUpdateFiles={setUpdateFiles} 
+       setIsLoading={setIsLoading} updateFiles={updateFiles} setUpdateFiles={setUpdateFiles} 
        fileContainerRef={fileContainerRef}
-       calculatedInitialTake={calculatedInitialTake} />
+       calculatedInitialTake={calculatedInitialTake}
+       nextCursor={nextCursor}
+      //  setNextCursor={setNextCursor}
+       lazyLoadState={lazyLoadStateRef}
+       />
       <Content 
         files={files}
         setFiles={setFiles}
@@ -74,6 +77,9 @@ function App() {
         setUpdateFiles={setUpdateFiles}
         fileContainerRef={fileContainerRef}
         calculatedInitialTake={calculatedInitialTake}
+        nextCursor={nextCursor}
+        // setNextCursor={setNextCursor}
+        lazyLoadState={lazyLoadStateRef}
       />
     </StyledAppContainer>
   );

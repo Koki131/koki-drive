@@ -6,6 +6,7 @@ import logo from "./assets/images/logo.png";
 import styled, { keyframes } from "styled-components";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
+import { BST } from '../util/BST';
 
 const apiUrl = import.meta.env.VITE_API_URL;
 
@@ -243,48 +244,80 @@ function debounce(func, wait) {
   }
 
   export default function Header({ 
-    files, setFiles, isLoading, setIsLoading, setUpdateFiles, 
-    fileContainerRef, calculatedInitialTake 
+    files, setFiles, isLoading, setIsLoading, updateFiles, setUpdateFiles, 
+    fileContainerRef, calculatedInitialTake,
+    nextCursor, lazyLoadState
 }) {
 
     const { folderId } = useParams();
     const { logout, toggle, displayMode } = useAuth();
     const [searchValue, setSearchValue] = useState("");
-    const [searchRange, setSearchRange] = useState(null); 
+    const hasMore = useRef(true);
 
+    const isLoadingMoreRef = useRef(false);
     
+    useEffect(() => {
+        setSearchValue("");
+    }, [folderId, updateFiles]);
+    
+    const executeSearch = async (query) => {
+        
+        if (!calculatedInitialTake.current) return;
 
-    const executeSearch = useCallback(async (query) => {
-      
+        lazyLoadState.current = "search";
+        hasMore.current = true; 
+        nextCursor.current = null;
+
         if (!query.trim()) {
-            setFiles([]);
-            setSearchRange(null); 
-            setUpdateFiles(prev => !prev);
+            setFiles(new BST(0));
             setIsLoading(false); 
+            isLoadingMoreRef.current = false;
+            setUpdateFiles(prev => !prev);
+            lazyLoadState.current = "list";
             return;
         }
 
-        setFiles([]);
+        setFiles(new BST(0));
         setIsLoading(true);
-        
-        const initialSkip = 0;
-
-        setSearchRange({ skip: initialSkip, take: calculatedInitialTake });
-
-        const req = await fetch(`${apiUrl}/search`, {
-            method: "POST",
-            headers: {"Content-Type":"application/json"},
-            credentials: "include",
-            body: JSON.stringify({searchTerm: query, skip: initialSkip, take: calculatedInitialTake})
-        });
-
-        const res = await req.json();
-
-        setIsLoading(false);
-        setFiles(res.files);
+        isLoadingMoreRef.current = true;
 
 
-    }, [folderId, setFiles, setIsLoading, setSearchRange, setUpdateFiles, calculatedInitialTake]);
+        try {            
+            const req = await fetch(`${apiUrl}/search`, {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                credentials: "include",
+
+                body: JSON.stringify({ searchTerm: query, take: calculatedInitialTake.current })
+            });
+            if (!req.ok) {
+                throw new Error(`HTTP error! status: ${request.status}`);
+              }
+            const res = await req.json();
+            const { files: initialFiles, nextCursor: initialNextCursor } = res.result;
+
+            nextCursor.current = initialNextCursor;
+            
+            hasMore.current = !!initialNextCursor;
+
+            const bst = new BST(calculatedInitialTake.current);
+            
+            for (const file of initialFiles) {
+              bst.add(file);
+            }
+            
+            setFiles(bst);
+
+        } catch (error) {
+            console.error("Error fetching initial search files:", e);
+            setFiles(new BST(0));
+        } finally {
+            setIsLoading(false);
+            isLoadingMoreRef.current = false;
+        }
+
+
+    };
 
     const debouncedExecuteSearch = useMemo(() => {
         return debounce(executeSearch, 500);
@@ -292,15 +325,11 @@ function debounce(func, wait) {
 
     const continueSearch = useCallback(async () => {
         
-        if (!searchRange) {
-            console.log('Search range not initialized, cannot continue search.');
+
+        if (!hasMore.current || isLoadingMoreRef.current || isLoading || lazyLoadState.current === "list") {
             return;
         }
 
-        if (isLoading) { 
-            console.log('Already loading more results, cannot continue search yet.');
-            return;
-        }
 
         const container = fileContainerRef.current;
         const { scrollTop, scrollHeight, clientHeight } = container;
@@ -308,31 +337,58 @@ function debounce(func, wait) {
         
         if (scrollTop + clientHeight >= scrollHeight - buffer) {
             
-            console.log("Continuing search. Current range:", searchRange, "Query:", searchValue);
             setIsLoading(true);
+            isLoadingMoreRef.current = true;
 
             const itemsPerPage = 30;
-            const newSkip = searchRange.skip + searchRange.take;
-    
-            setSearchRange({ skip: newSkip, take: itemsPerPage });
+
+            try {                
+                const req = await fetch(`${apiUrl}/search`, {
+                    method: "POST",
+                    headers: {"Content-Type":"application/json"},
+                    credentials: "include",
+
+                    body: JSON.stringify({
+                        searchTerm: searchValue, 
+                        take: itemsPerPage,
+                        cursor: nextCursor.current // Send the cursor for the next page
+                    })
+                });
+
+                if (!req.ok) {
+                    throw new Error(`HTTP error! status: ${req.status}`);
+                }
+                const res = await req.json();
+                
+                const { files: newFiles, nextCursor: newNextCursor } = res.result;
+
+                if (newFiles && newFiles.length > 0) {
+                    setFiles(currentBst => {
+                        const newBst = currentBst.clone();
+                        
+                        for (const file of newFiles) {
+                            const fileNode = newBst.find(file);
+                            if (!fileNode) {
+                                newBst.add(file);
+                            }
+                        }
+                        return newBst;
+                    });
+                }
+                
+                nextCursor.current = newNextCursor;
+                hasMore.current = !!newNextCursor;
+
+            } catch (error) {
+                console.error("Error continuing search:", error);
+            } finally {
+                setIsLoading(false);
+                isLoadingMoreRef.current = false;
+            }
             
-    
-
-            const req = await fetch(`${apiUrl}/search`, {
-                method: "POST",
-                headers: {"Content-Type":"application/json"},
-                credentials: "include",
-                body: JSON.stringify({searchTerm: searchValue, skip: newSkip, take: itemsPerPage})
-            });
-
-            const res = await req.json();
-
-            setIsLoading(false);
-            
-            setFiles((prev) => [...prev, ...res.files]);
 
         }
-    }, [searchRange, searchValue, setIsLoading, setSearchRange, isLoading]); 
+    }, [searchValue, setIsLoading, isLoading]); 
 
     
 
@@ -358,14 +414,16 @@ function debounce(func, wait) {
 
     const clearInput = () => {
         setSearchValue("");
+        lazyLoadState.current = "list";
         executeSearch("");
     };
 
 
     useEffect(() => {
         const currentFileContainer = fileContainerRef.current;
-        if (currentFileContainer && searchRange) { 
-            console.log("Adding scrollend listener. Current searchRange:", searchRange);
+
+        if (currentFileContainer && !isLoadingMoreRef.current && hasMore.current && lazyLoadState.current === "search") { 
+
             currentFileContainer.addEventListener("scroll", continueSearch);
             
             return () => {
@@ -373,9 +431,9 @@ function debounce(func, wait) {
                 currentFileContainer.removeEventListener("scroll", continueSearch);
             };
         } else {
-             console.log("Scrollend listener not added (no currentFileContainer or searchRange is null).");
+            //  console.log("Scrollend listener not added (no currentFileContainer or searchRange is null).");
         }
-    }, [continueSearch, fileContainerRef, searchRange]);
+    }, [continueSearch, fileContainerRef, isLoadingMoreRef, hasMore.current, lazyLoadState.current]);
 
 
 

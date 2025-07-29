@@ -65,41 +65,43 @@ const queryFilesByParent = async (userId, parent, cursor, take) => {
     const parentId = parent ? Number.parseInt(parent) : null;
     const takeVal = take ? Number.parseInt(take) : 30;
     
+    
     const where = {
         userId: userId,
         parentId: parentId,
     };
 
-
     if (cursor) {
-        const orConditions = [];
+        where.OR = [
 
+            {
+                AND: [
+                    { type: 'FILE' },
+                    { type: { not: cursor.type } } 
+                ]
+            },
 
-        if (cursor.type === 'FOLDER') {
-            orConditions.push({ type: 'FILE' });
-        }
+            {
+                AND: [
+                    { type: cursor.type },
+                    { name: { gt: cursor.name } }
+                ]
+            },
 
-        orConditions.push({
-            AND: [
-                { type: cursor.type },
-                { name: { gt: cursor.name } },
-            ],
-        });
-
-        orConditions.push({
-            AND: [
-                { type: cursor.type },
-                { name: cursor.name },
-                { id: { gt: cursor.id } },
-            ],
-        });
-
-        where.OR = orConditions;
+            {
+                AND: [
+                    { type: cursor.type },
+                    { name: cursor.name },
+                    { id: { gt: cursor.id } }
+                ]
+            }
+        ];
     }
 
     const files = await prisma.file.findMany({
         where: where,
         take: takeVal,
+
         orderBy: [
             { type: 'desc' }, 
             { name: 'asc' },  
@@ -108,14 +110,16 @@ const queryFilesByParent = async (userId, parent, cursor, take) => {
     });
 
     let nextCursor = null;
-    if (files.length === takeVal) {
-        const lastFile = files[takeVal - 1];
+
+    const lastFile = files[files.length - 1];
+    if (lastFile) {
         nextCursor = {
             type: lastFile.type,
             name: lastFile.name,
             id: lastFile.id,
         };
     }
+    
 
     return {
         files,
@@ -237,7 +241,7 @@ const fileStatus = async (parentId, user, fileName) => {
 };
 
 
-const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
+const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
 
     const parentId = obj.parentId;
     const fileName = obj.fileName;
@@ -255,7 +259,8 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
                 parent: parentId ? {connect: {id: parentId}} : {},
                 chunkStart: chunkData.start,
                 chunkEnd: chunkData.end,
-                totalSize: chunkData.fileSize
+                previewUrl: "",
+                mimeType: mimeType
             }
         });
     } else {
@@ -277,6 +282,24 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user) => {
 
     }
     
+    return file;
+
+};
+
+const updateFilePreveiw = async (fileId, user, fullPreviewPath) => {
+
+
+    const file = await prisma.file.update({
+        where: {
+            id: fileId,
+            userId: user.id,
+            type: "FILE"
+        },
+        data: {
+            previewUrl: fullPreviewPath
+        }
+    });
+
     return file;
 
 };
@@ -312,6 +335,8 @@ const saveCopyToDb = async (file, parentId, destPath, user) => {
             ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
             chunkStart: file.chunkStart,
             chunkEnd: file.chunkEnd,
+            previewUrl: file.previewUrl,
+            mimeType: file.mimeType
         }
     });
 
@@ -486,7 +511,7 @@ const renameFile = async (fileId, newName, orgPath) => {
         }
     });
 
-    return updateName ? await getFullPaths([fileId], orgPath) : null;
+    return updateName ? {fullPath: await getFullPaths([fileId], orgPath), file: file} : null;
 
 };
 
@@ -519,5 +544,6 @@ module.exports = {
     getFullPaths,
     renameFile,
     deleteFile,
-    getSearchResult
+    getSearchResult,
+    updateFilePreveiw
 }
