@@ -106,7 +106,10 @@ class BST {
     }
 
     delete(nodeToRemove) {
+        console.log(nodeToRemove);
+        
         this.root = this.remove(new FileWrapper(nodeToRemove), this.root);
+        delete this.fileValues[nodeToRemove.id];
         if (this.len > 0) this.len--;
     }
 
@@ -274,10 +277,11 @@ class BST {
 
         const nameComparison = fileA.name.localeCompare(fileB.name);
         
-        if (nameComparison !== 0) return nameComparison;
+        // if (nameComparison !== 0) 
+        return nameComparison;
 
 
-        return fileA.id - fileB.id;
+        // return fileA.id - fileB.id;
     }
 
 

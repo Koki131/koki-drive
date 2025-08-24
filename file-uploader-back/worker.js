@@ -5,7 +5,7 @@ const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
 const IORedis = require('ioredis');
 
-const { updateFilePreveiw } = require("./prisma/queries");
+const { getFileById } = require("./prisma/queries");
 
 console.log('Worker process started.');
 
@@ -53,11 +53,12 @@ const processor = async (job) => {
               fs.rmSync(tempPngPath);
         }
 
-        const res = await updateFilePreveiw(fileId, user, basePreviewPath);
-        // console.log(`[Worker] Job ${job.id} complete. Preview for file ${fileId} at ${previewPath}`);
+        const res = await getFileById(fileId);
+
+        console.log(`[Worker] Job ${job.id} complete. Preview for file ${fileId} at ${previewPath}`);
         
         
-        // 2. NEW: Publish the completion event to Redis
+        // Publish the completion event to Redis
         const channel = `user-notifications:${user.id}`;
         const payload = JSON.stringify({
             event: 'preview-complete',
@@ -69,7 +70,7 @@ const processor = async (job) => {
 
         await redisPublisher.publish(channel, payload);
 
-        console.log(`[Worker] Published to channel '${channel}' for file ${fileId}`);
+        // console.log(`[Worker] Published to channel '${channel}' for file ${fileId}`);
 
     } catch (err) {
         console.error(`[Worker] Job ${job.id} failed for fileId ${fileId}:`, err);

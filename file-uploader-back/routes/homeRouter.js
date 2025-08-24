@@ -1,5 +1,5 @@
 const Router = require("express");
-const { register, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste, createNewFolder, getParentPath, handleSearchConnection, getImagePreview, eventsUtil } = require("../controllers/homeController");
+const { register, getPreviewableSize, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste, createNewFolder, getParentPath, handleSearchConnection, getImagePreview, eventsUtil, getFullPreview } = require("../controllers/homeController");
 const passport = require("passport");
 const bodyParser = require("body-parser");
 
@@ -32,6 +32,8 @@ homeRouter.post("/createNewFolder", createNewFolder);
 homeRouter.get("/events", eventsUtil)
 homeRouter.get("/getFilesByParent", getFilesByParent);
 homeRouter.get("/previews/:userId/*", getImagePreview);
+homeRouter.get("/fullPreviews/:userId/*", getFullPreview);
+homeRouter.get("/getPreviewableSize/:folderId", getPreviewableSize);
 homeRouter.get("/isUserAuthenticated", isAuth);
 
 module.exports = homeRouter;

@@ -244,7 +244,7 @@ function debounce(func, wait) {
   }
 
   export default function Header({ 
-    files, setFiles, isLoading, setIsLoading, updateFiles, setUpdateFiles, 
+    files, dispatch, isLoading, setIsLoading, updateFiles, setUpdateFiles, 
     fileContainerRef, calculatedInitialTake,
     nextCursor, lazyLoadState
 }) {

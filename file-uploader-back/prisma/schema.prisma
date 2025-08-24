@@ -19,29 +19,37 @@ model User {
   username      String @unique
   password      String
   files         File[]
+  root          Root?
 }
 
 model File {
-  id         Int       @id @default(autoincrement())
-  name       String    
-  type       FileType  @default(FILE)
-  createdAt  DateTime  @default(now())
+  id            Int       @id @default(autoincrement())
+  name          String    
+  type          FileType  @default(FILE)
+  createdAt     DateTime  @default(now())
 
-  parentId   Int?      
-  parent     File?     @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
-  children   File[]    @relation("ParentChild")
+  parentId      Int?      
+  parent        File?     @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
+  children      File[]    @relation("ParentChild")
 
-  userId     Int      
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int      
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  chunkStart String @default("")
-  chunkEnd   String @default("")
+  chunkStart    String @default("")
+  chunkEnd      String @default("")
 
-  previewUrl String @default("")
-  mimeType   String @default("")
+  mimeType      String @default("")
+  previewCount  Int    @default(0)
   
   @@index([parentId, name])
   @@unique([parentId, name, type])
+}
+
+model Root {
+  id           Int  @id @default(autoincrement())
+  previewCount Int @default(0)
+  userId       Int  @unique
+  user         User @relation(fields: [userId], references: [id])
 }
 
 model Session {

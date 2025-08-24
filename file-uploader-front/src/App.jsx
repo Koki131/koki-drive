@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import './App.css'
 import styled from 'styled-components'
 import Header from './Header'
 import Content from './Content'
 import { BST } from '../util/BST'
 import { useParams } from 'react-router'
+import filesReducer from '../util/FilesReducer'
 
 const StyledAppContainer = styled.div`
   height: 100vh;
@@ -16,7 +17,7 @@ const StyledAppContainer = styled.div`
 
 function App() {
   const [isLoading, setIsLoading] = useState(false);
-  const [files, setFiles] = useState({folders: new BST(0), files: new BST(0)});
+  const [files, dispatch] = useReducer(filesReducer, {folders: new BST(0), files: new BST(0)});
   const [updateFiles, setUpdateFiles] = useState(false);
   const nextCursor = useRef(null);
   const calculatedInitialTake = useRef(null);
@@ -60,7 +61,7 @@ function App() {
 
   return (
     <StyledAppContainer>
-      <Header files={files} setFiles={setFiles} isLoading={isLoading}
+      <Header files={files} dispatch={dispatch} isLoading={isLoading}
        setIsLoading={setIsLoading} updateFiles={updateFiles} setUpdateFiles={setUpdateFiles} 
        fileContainerRef={fileContainerRef}
        calculatedInitialTake={calculatedInitialTake}
@@ -70,7 +71,7 @@ function App() {
        />
       <Content 
         files={files}
-        setFiles={setFiles}
+        dispatch={dispatch}
         isLoading={isLoading}
         setIsLoading={setIsLoading}
         updateFiles={updateFiles}

@@ -6,9 +6,15 @@ import Sidebar from './Sidebar';
 import fileImage from './assets/images/file.svg';
 import folderImage from './assets/images/folder.svg';
 import zipImage from './assets/images/folder-zip.svg';
+import zoomIn from './assets/images/plus.svg';
+import zoomOut from './assets/images/minus.svg';
+import zoomIcon from './assets/images/zoom.svg';
 import menuUp from './assets/images/menu-up.svg';
 import menuDown from './assets/images/menu-down.svg';
 import close from './assets/images/close.svg';
+import closeWindow from './assets/images/close-thick.svg';
+import leftArrow from './assets/images/menu-left.svg';
+import rightArrow from './assets/images/menu-right.svg';
 import copyImg from "./assets/images/copy.svg";
 import cutImg from "./assets/images/cut.svg";
 import renameImg from "./assets/images/rename.svg";
@@ -23,12 +29,14 @@ import nameSort from "./assets/images/name_sort.svg";
 import { useAuth } from './AuthProvider';
 import useSseListener from '../hooks/useEventSource';
 import { BST } from '../util/BST';
+import LinkedList from '../util/LinkedList';
 
 
 const ContentContainer = styled.div`
   display: flex;
   flex-direction: row;
   width: 100vw;
+  position: relative;
 `;
 
 const Files = styled.div`
@@ -349,7 +357,7 @@ let fileCoords = {};
 const apiUrl = import.meta.env.VITE_API_URL;
 
 export default function Content({
-  files, setFiles, isLoading, setIsLoading,
+  files, dispatch, isLoading, setIsLoading,
   updateFiles, setUpdateFiles,
   fileContainerRef,
   calculatedInitialTake,
@@ -386,10 +394,12 @@ export default function Content({
   const itemRefs = useRef({});
   const selectionBoxRef = useRef();
   const progressCompRef = useRef();
+  const previewRef = useRef();
   const gridRef = useRef({});
   const liveRenderedCount = useRef(0);
   const maxRenderedFiles = useRef(0);
   const uploadQueueRef = useRef([]);
+  const previewableItemsRef = useRef(new LinkedList());
   
 
   // fix uploadQueue
@@ -399,7 +409,7 @@ export default function Content({
     
     const sortedFolders = (sortOptions.sortDir === 'asc') ? files.folders.getInOrder() : files.folders.getReverseOrder();
     const sortedFiles = (sortOptions.sortDir === 'asc') ? files.files.getInOrder() : files.files.getReverseOrder();
-    
+
     return [...sortedFolders, ...sortedFiles];
 
   }, [files, sortOptions]);
@@ -418,38 +428,23 @@ export default function Content({
       if (message) {
         switch (message.event) {
           case "file-transfer": {
+            
+            if (lazyLoadState.current === "search") return;
 
             const fileData = message.folder || message.file || message.filePasted;
 
+            
             if (fileData.parentId !== folderIdRef.current) return;
 
             if (liveRenderedCount.current < maxRenderedFiles.current) {
+              
 
-              setFiles(currentBst => {
-                const newFolders = currentBst.folders.clone(); 
-                const newFiles = currentBst.files.clone(); 
-  
-  
-                let fileExists = null;
-
-                if (fileData.type === 'FOLDER') {
-                  fileExists = newFolders.find(fileData);
-                } else {
-                  fileExists = newFiles.find(fileData);
-                }
-
-                if (fileExists) {
-                  return currentBst;
-                }
+              dispatch({ type: 'file-transfer', payload: fileData });
+              
+              if (fileData.mimeType.startsWith("video/") || fileData.mimeType.startsWith("image/")) {
+                  previewableItemsRef.current.add(fileData.id, fileData.relativePath);
+              }
                 
-                if (fileData.type === 'FOLDER') {
-                  newFolders.add(fileData);
-                } else {
-                  newFiles.add(fileData);
-                }
-                
-                return {folders: newFolders, files: newFiles};
-              });
 
             } else {
 
@@ -464,23 +459,11 @@ export default function Content({
     
           }
           case "preview-complete": {
-
-            setFiles(currentBst => {
-              const newFolders = currentBst.folders.clone();
-              const newFiles = currentBst.files.clone();
-              
-              let fileNode = null;
-              if (message.file.type === 'FOLDER') {
-                fileNode = newFolders.find(message.file)
-              } else {
-                fileNode = newFiles.find(message.file);
-              }
-
-              if (fileNode) {
-                fileNode.previewUrl = message.previewUrl;
-              }
-              return {folders: newFolders, files: newFiles};
-            });
+            
+            if (lazyLoadState.current === "search") return;
+            
+            
+            dispatch({ type: 'preview-complete', payload: message });
 
             break;
           }
@@ -499,8 +482,9 @@ export default function Content({
     folderIdRef.current = folderId ? Number.parseInt(folderId) : null;
     gridRef.current = {};
     setShouldRename(-1);
-
+    previewableItemsRef.current = new LinkedList();
   }, [folderId]);
+
 
   
   useEffect(() => {
@@ -581,13 +565,13 @@ export default function Content({
             }
             const response = await request.json();
             const { files: initialFiles, nextCursor: initialNextCursor } = response.result;
-   
+            
             liveRenderedCount.current = initialFiles.length;
             maxRenderedFiles.current = calculatedInitialTake.current; 
-
+            
             uploadQueueRef.current = [];
-   
-
+            
+            
             const newFolders = new BST(calculatedInitialTake.current);
             const newFiles = new BST(calculatedInitialTake.current);
             
@@ -596,31 +580,34 @@ export default function Content({
                 newFolders.add(file);
               } else {
                 newFiles.add(file);
+                if (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/")) {
+                  previewableItemsRef.current.add(file.id, file.relativePath);
+                }
               }
             }
-
+            
             nextCursor.current = initialNextCursor;
             hasMore.current = !!nextCursor.current;
             
-            setFiles({folders: newFolders, files: newFiles});
+            dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
 
             
 
         } catch (e) {
             console.error("Error fetching initial files:", e);
-            setFiles({folders: new BST(0), files: new BST(0)});
+            dispatch({type: 'init-load', payload: {folders: new BST(0), files: new BST(0)}});
         } finally {
             setIsLoading(false);
             isLoadingMoreRef.current = false;
         }
     };
 
-    setFiles({folders: new BST(0), files: new BST(0)});
+    dispatch({type: 'init-load', payload: {folders: new BST(0), files: new BST(0)}});
     getFiles();
 
 }, [folderId, calculatedInitialTake.current, updateFiles]);
 
-  const lazyLoadFiles = async () => {
+  const lazyLoadFiles = async (imageLoad) => {
 
     if (!hasMore.current || isLoadingMoreRef.current || isLoading) return;
     
@@ -630,7 +617,7 @@ export default function Content({
     const { scrollTop, scrollHeight, clientHeight } = container;
     const buffer = 20;
 
-    if (scrollTop + clientHeight >= scrollHeight - buffer) {
+    if ((scrollTop + clientHeight >= scrollHeight - buffer) || (imageLoad)) {
       
       isLoadingMoreRef.current = true;
       setIsLoading(true);
@@ -639,58 +626,27 @@ export default function Content({
       maxRenderedFiles.current += take;   
 
       try {
+        
+        let filesToAdd = []; 
 
         if (uploadQueueRef.current.length > 0) {
           // uploadQueueRef.current.sort(compareFiles); if concurrent uploads
 
           const pageFromQueue = uploadQueueRef.current.splice(0, take);
-          
-          let folderCount = 0; 
-          const size = Math.min(pageFromQueue.length, take);
-
-          for (let i = 0; i < size; i++) {
-            if (pageFromQueue[i].type === 'FOLDER') {
-              folderCount++;
-            }
-          }
-
-          const fileCount = size - folderCount;
-
-          setFiles(currentBst => {
-            
-            const newFolders = currentBst.folders.clone(currentBst.folders.size + folderCount);
-            const newFiles = currentBst.files.clone(currentBst.files.size + fileCount);
-
-
-              for (const file of pageFromQueue) { 
-                  if (file.type === 'FOLDER') {
-                    if (!newFolders.find(file)) {
-                      newFolders.add(file);
-                    }
-                  } else {
-                    if (!newFiles.find(file)) {
-                      newFiles.add(file);
-                    }
-                  }
-                  liveRenderedCount.current++;
-              }
-              return {folders: newFolders, files: newFiles};
-          });
+          filesToAdd = pageFromQueue;
           
           const lastFileInPage = pageFromQueue[pageFromQueue.length - 1];
           nextCursor.current = { type: lastFileInPage.type, name: lastFileInPage.name, id: lastFileInPage.id };
-          
-          return;
-        }
 
+        } else {
 
-        const parent = folderId ? folderId : "";
-
-        let url = `${apiUrl}/getFilesByParent?parent=${parent}&take=${take}`;
-        if (nextCursor) {
-          url += `&cursor=${encodeURIComponent(JSON.stringify(nextCursor.current))}`;
-        }
-
+          const parent = folderId ? folderId : "";
+  
+          let url = `${apiUrl}/getFilesByParent?parent=${parent}&take=${take}`;
+          if (nextCursor) {
+            url += `&cursor=${encodeURIComponent(JSON.stringify(nextCursor.current))}`;
+          }
+  
           const request = await fetch(url, {
               method: "GET",
               headers: { "Content-Type": "application/json" },
@@ -704,43 +660,28 @@ export default function Content({
           const response = await request.json();
           const { files: newFiles, nextCursor: newCursor } = response.result;
 
-          
-        if (newFiles && newFiles.length > 0) {
-
-            let folderCount = 0; 
-            const size = Math.min(newFiles.length, take);
-
-            for (let i = 0; i < size; i++) {
-              if (newFiles[i].type === 'FOLDER') {
-                folderCount++;
-              }
-            }
-
-            const fileCount = size - folderCount;
-
-            setFiles(currentBst => {
-              
-              const newFoldersBst = currentBst.folders.clone(currentBst.folders.size + folderCount);
-              const newFilesBst = currentBst.files.clone(currentBst.files.size + fileCount);
-
-
-                for (const file of newFiles) { 
-                    if (file.type === 'FOLDER') {
-                      if (!newFoldersBst.find(file)) {
-                        newFoldersBst.add(file);
-                      }
-                    } else {
-                      if (!newFilesBst.find(file)) {
-                        newFilesBst.add(file);
-                      }
-                    }
-                    liveRenderedCount.current++;
-                }
-                return {folders: newFoldersBst, files: newFilesBst};
-            });
+          if (newFiles && newFiles.length > 0) {  
+            filesToAdd = newFiles;
+          }
+  
+  
+          nextCursor.current = newCursor;
+          if (!newCursor) {
+              hasMore.current = false;
+          }            
         }
-          
-        nextCursor.current = newCursor;               
+
+        if (filesToAdd.length > 0) {
+        
+          for (const file of filesToAdd) {
+              if (file.mimeType && (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/"))) {
+                  previewableItemsRef.current.add(file.id, file.relativePath);
+              }
+              liveRenderedCount.current++;
+          }
+
+        dispatch({ type: 'lazy-load', payload: filesToAdd });
+      }
 
       } catch (e) {
           console.error("Error lazy loading files:", e);
@@ -752,8 +693,21 @@ export default function Content({
   };
 
   useEffect(() => {
+
+    
     setFileSize();
     populateGrid();
+
+    const allFiles = files.files.getInOrder();
+    const newPreviewableList = new LinkedList();
+
+    for (const file of allFiles) {
+      if (file.mimeType && (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/"))) {
+          newPreviewableList.add(file.id, file.relativePath);
+      }
+    }
+    previewableItemsRef.current = newPreviewableList;
+
   }, [memoizedFileValues]);
 
   const populateGrid = () => {
@@ -832,12 +786,20 @@ export default function Content({
 
   const handleClick = (file) => {
 
-    if (file.type === "FOLDER") {
-      if (file.id === folderIdRef.current) {
-        setUpdateFiles(prev => !prev);
+      if (file.type === "FOLDER") {
+        if (file.id === folderIdRef.current) {
+          setUpdateFiles(prev => !prev);
+        }
+        navigate(`/folders/${file.id}`);
+      } else if (file.mimeType.startsWith("image/")) {
+
+        // console.log(previewableItemsRef.current);
+        
+        previewRef.current.updateState(true);
+        previewRef.current.updateCurrentSrc(file.id);
+        
       }
-      navigate(`/folders/${file.id}`);
-    }
+      
 
   };
   const areSelectedObjectsEqual = (objA, objB) => {
@@ -908,24 +870,15 @@ export default function Content({
           return;
         }
         const res = await req.json();
-        setFiles(currentBst => {
-          const newFolders = currentBst.folders.clone();
-          const newFiles = currentBst.files.clone();
-          
-          const fileToRename = res.renamedFile;
+        const fileToRename = res.oldFile;
+        const renamedFile = res.renamedFile;
+        
 
-          let fileFound = null;
-          if (fileToRename.type === "FOLDER") {
-            fileFound = newFolders.find(fileToRename)
-          } else {
-            fileFound = newFiles.find(fileToRename);
-          }
-
-
-          fileFound.name = newName.trim();
-          
-          return {folders: newFolders, files: newFiles};
-        });
+        // if (previewableItemsRef.current.idToNode[fileToRename.id]) {
+        //   previewableItemsRef.current.idToNode[fileToRename.id].value = renamedFile.relativePath;
+        // }
+        
+        dispatch({type: 'rename-file', payload: {newFile: renamedFile, oldFile: fileToRename, name: newName}});
       }
     }
     
@@ -995,25 +948,15 @@ export default function Content({
           return;
         }
         const res = await req.json();
+        const fileToRename = res.oldFile;
+        const renamedFile = res.renamedFile;
 
-        setFiles(currentBst => {
-          const newFolders = currentBst.folders.clone();
-          const newFiles = currentBst.files.clone();
-          
-          const fileToRename = res.renamedFile;
+        // if (previewableItemsRef.current.idToNode[fileToRename.id]) {
+        //   previewableItemsRef.current.idToNode[fileToRename.id].value = renamedFile.relativePath;
+        // }
 
-          let fileFound = null;
-          if (fileToRename.type === "FOLDER") {
-            fileFound = newFolders.find(fileToRename)
-          } else {
-            fileFound = newFiles.find(fileToRename);
-          }
+        dispatch({type: 'rename-file', payload: {newFile: renamedFile, oldFile: fileToRename, name: newName}});
 
-
-          fileFound.name = newName.trim();
-          
-          return {folders: newFolders, files: newFiles};
-        });
     }
     if (!target.closest('[text-area-id]')) {
       setShouldRename(-1);
@@ -1544,11 +1487,15 @@ export default function Content({
     if (selFiles) {
       fileId = selFiles[0];
     }
-    
-    const file = files[Number.parseInt(fileId)];
+
     
     setFileContextWindow({visible: false, x:0, y:0});
-    if (file) setNewName(file.name);
+    const file = files.files.fileValues[fileId] || files.folders.fileValues[fileId];
+
+    if (file) {
+      setNewName(file.name);
+    }
+    
     setShouldRename(Number.parseInt(fileId));
 
   };
@@ -1603,7 +1550,7 @@ export default function Content({
     newFolders.fileValues = fileValues;
     newFiles.fileValues = fileValues;
     
-    setFiles({folders: newFolders, files: newFiles});
+    dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
 
     setFileContextWindow({visible: false, x: 0, y: 0});
     
@@ -1715,7 +1662,7 @@ export default function Content({
         const newFolders = files.folders.clone();
         const newFiles = files.files.clone();
         newFolders.add(res.folder);
-        setFiles({folders: newFolders, files: newFiles});
+        dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
       }
       setNewFolder(false);
     }
@@ -1727,6 +1674,7 @@ export default function Content({
 
   return (
     <ContentContainer>
+      <PreviewComp ref={previewRef} previewableItems={previewableItemsRef.current} sortOptions={sortOptions} folderId={folderIdRef.current} lazyLoadFiles={lazyLoadFiles}></PreviewComp>
       {newFolder && <NewFolderWindow displayMode={displayMode}>
         <NewFolderHeaderContainer displayMode={displayMode}>
           <h4>Create Folder</h4>
@@ -1752,8 +1700,9 @@ export default function Content({
             const isSelected = !!(selectedFiles && selectedFiles[file.id]);
             const isBeingRenamed = shouldRename === file.id;
 
+            
             let fileImagePreview = `${apiUrl}${file.previewUrl}`;
-
+            
 
             return (
               <FileItem
@@ -1827,7 +1776,8 @@ const FileItem = memo(function FileItem({
   defaultImage
 }) {
   const [shouldHighlight, setShouldHighlight] = useState(false);
-
+  // console.log(file, fileImage);
+  
 
   const handleSelect = (e) => {
     onFileSelect(e, file.id);
@@ -1855,7 +1805,7 @@ const FileItem = memo(function FileItem({
   };
 
   return (
-    <FileContainer // Pass index to assignRef
+    <FileContainer
       data-file-id={file.id}
       data-file-type={file.type}
       ref={(el) => assignRef(el, file.id)}
@@ -1880,8 +1830,8 @@ const FileItem = memo(function FileItem({
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.stopPropagation()}
-            value={newNameForRename} // Use the specific prop
-            onChange={onNameChange} // Pass the specific handler
+            value={newNameForRename}
+            onChange={onNameChange}
             autoFocus={true}
           />
         ) : (
@@ -1908,7 +1858,450 @@ const FileItem = memo(function FileItem({
   );
 });
 
+const PreviewContainer = styled.div`
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  background-color: #0000006b;
+  display: flex;
+  flex-direction: column;
+`;
+const PreviewClose = styled.div`
+  color: white;
+  width: 100%;
+  display: flex;
+  justify-content: right;
+`;
 
+const PreviewWrapper = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 4fr 1fr;
+  flex: 1;
+  overflow: hidden;
+`;
+const Pointer = styled.div`
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`;
+const PointerWrapper = styled.div`
+  background-color: #00000082;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease-in-out;
+  &:hover {
+    border-color: #9028f9;
+  }
+`;
+const Preview = styled.div`
+  width: 100%;
+  height: 100%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+`;
+const PreviewImgContainer = styled.div`
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`
+const PreviewImg = styled.img`
+  object-fit: contain; 
+  max-width: 100%;
+  max-height: 100%;
+  -webkit-user-drag: none;
+  user-select: none;
+`;
+const CloseImg = styled.img`
+  width: 1.5vw;
+  padding: 0.5vw;
+`;
+const PointerImg = styled.img`
+  width: 5vw;
+  cursor: pointer;
+`;
+const ZoomComp = styled.div`
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.5vw;
+  padding: 0.5vw;
+`
+const ZoomWrapper = styled.div`
+  background-color: #00000082;
+  border-radius: 24px;
+  display: grid;
+  grid-template-columns: 1fr 4fr 1fr;
+  padding: 0.5vw;
+  width: 7%;
+  justify-items: center;
+`;
+const Zoom = styled.div`
+  width: 1.5vw;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+`;
+const ZoomImg = styled.div`
+  width: 1.5vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+`;
+
+const LoadingSpinner = styled.div`
+  width: 100%;
+  height: 100%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`
+const spinnerKeyframes = keyframes`
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+`;
+const Spinner = styled.div`
+  border: 10px solid white;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border-bottom-color: transparent;
+  animation: ${spinnerKeyframes} 1s linear infinite;
+`
+
+
+const ZOOM_SENSITIVITY = 0.001;
+const MAX_ZOOM = 5;
+const MIN_ZOOM = 1;
+
+function PreviewComp({ ref, previewableItems, sortOptions, folderId, lazyLoadFiles }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(-1);
+  
+  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+  
+  const [isDragging, setIsDragging] = useState(false);
+  const [isLoading, setIsLoading] = useState(null);
+  const dragStart = useRef({ x: 0, y: 0 });
+
+  const imageContainerRef = useRef(null);
+  const imageRef = useRef(null);
+
+
+  
+  const resetTransform = () => {
+    setTransform({ scale: 1, x: 0, y: 0 });
+  };
+
+  useImperativeHandle(ref, () => ({
+    getState: () => showPreview,
+    updateState: (newState) => {
+      resetTransform();
+      setShowPreview(newState);
+    },
+    getCurrentSrc: () => currentSrc,
+    updateCurrentSrc: (newSrc) => setCurrentSrc(newSrc),
+  }));
+
+  const closePreview = () => {
+    setShowPreview(false);
+  };
+  
+  const stopPropagation = (e) => {
+    e.stopPropagation();
+  };
+
+  const getUrlForId = (id) => {
+    return previewableItems.idToNode[id]
+      ? `${apiUrl}${previewableItems.idToNode[id].value}`
+      : null;
+  };
+
+  const handleLeftMove = (e) => {
+    stopPropagation(e);
+
+    if (isLoading) return;
+
+    const currNode = previewableItems.idToNode[currentSrc];
+    let prevNode = null;
+
+    if (currNode) {
+      if (sortOptions.sortDir === "desc") {
+        prevNode = previewableItems.idToNode[currentSrc].next;      
+      } else {
+        prevNode = previewableItems.idToNode[currentSrc].prev;
+      }
+    }
+    if (prevNode) {
+      resetTransform();
+      setCurrentSrc(prevNode.id);
+      setIsLoading(getUrlForId(prevNode.id));
+    } 
+  };
+
+  const handleRightMove = async (e) => {
+    stopPropagation(e);
+
+    if (isLoading) return;
+
+    const previewSize = await checkPreviewableItemsSize(folderId);
+    
+    // if last item and there are more items, load more, only if sort direction is ascending
+
+    const currNode = previewableItems.idToNode[currentSrc];
+
+    let nextNode = null;
+    if (currNode) {
+      if (sortOptions.sortDir === "desc") {
+        nextNode = previewableItems.idToNode[currentSrc].prev;      
+      } else {
+        nextNode = previewableItems.idToNode[currentSrc].next;
+      }
+    }
+    if (sortOptions.sortDir === 'asc') {
+      if (nextNode && nextNode.id === previewableItems.tail.id && previewableItems.len < previewSize) {
+        await lazyLoadFiles(true);
+
+      }
+    }
+    if (nextNode) {
+      resetTransform();
+      setCurrentSrc(nextNode.id);
+      setIsLoading(getUrlForId(nextNode.id));
+
+    }
+  };
+
+  const checkPreviewableItemsSize = async (folderId) => {
+    
+    const req = await fetch(`${apiUrl}/getPreviewableSize/${folderId}`, {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const res = await req.json();
+
+    const size = res.previewCount;
+
+
+    return size;
+
+  };
+
+
+  const handleImageLoad = (e) => {
+    
+    if (imageContainerRef.current) {
+      const width = e.target.naturalWidth;
+      const height = e.target.naturalHeight;
+      
+      if (width >= height) {
+        imageContainerRef.current.style.width = "100%";
+        imageContainerRef.current.style.height = "100%";
+      } else {
+        imageContainerRef.current.style.width = "50%";
+        imageContainerRef.current.style.height = "100%";      
+      }
+    }
+    if (e.target.src === isLoading) {
+      
+      setIsLoading(null);
+    }
+  };
+
+  const handleImageError = (e) => {
+    if (e.target.src === isLoading) {
+      setIsLoading(null);
+    }
+  };
+
+  const handleScroll = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!imageContainerRef.current) return;
+
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    const delta = e.deltaY * -ZOOM_SENSITIVITY;
+
+    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, transform.scale + delta));
+
+    if (newScale === MIN_ZOOM) {
+      setTransform({scale: 1, x: 0, y: 0});
+      return;
+    }
+    
+    if (newScale === transform.scale) return;
+
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+
+    const newX = mouseX - ((mouseX - transform.x) / transform.scale) * newScale;
+    const newY = mouseY - ((mouseY - transform.y) / transform.scale) * newScale;
+
+    setTransform({
+      scale: newScale,
+      x: newX,
+      y: newY,
+    });
+  };
+
+
+  const onMouseDown = (e) => {
+
+    if (transform.scale <= MIN_ZOOM) return;
+    e.preventDefault();
+    setIsDragging(true);
+
+    dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+  };
+
+ const onMouseMove = (e) => {
+    if (!isDragging || !imageRef.current || !imageContainerRef.current) return;
+    e.preventDefault();
+
+    const newX = e.clientX - dragStart.current.x;
+    const newY = e.clientY - dragStart.current.y;
+
+
+    const imageRect = imageRef.current.getBoundingClientRect();
+    const containerRect = imageContainerRef.current.getBoundingClientRect();
+    
+    const imageWidth = imageRect.width;
+    const imageHeight = imageRect.height;
+    
+    const containerWidth = containerRect.width;
+    const containerHeight = containerRect.height;
+
+
+    const maxTranslateX = 0;
+    const maxTranslateY = 0;
+
+    const minTranslateX = containerWidth - imageWidth;
+    const minTranslateY = containerHeight - imageHeight;
+    
+
+    const clampedX = Math.max(Math.min(newX, maxTranslateX), minTranslateX);
+    const clampedY = Math.max(Math.min(newY, maxTranslateY), minTranslateY);
+    
+    setTransform(prev => ({ ...prev, x: clampedX, y: clampedY }));
+  };
+
+  const onMouseUpOrLeave = () => {
+    setIsDragging(false);
+  };
+  
+  const getCursorStyle = () => {
+    if (isDragging) return 'grabbing';
+    if (transform.scale > MIN_ZOOM) return 'grab';
+    return 'zoom-in';
+  };
+
+  const zoomOutHandler = () => {
+    if (transform.scale >= MIN_ZOOM) {
+      setTransform((prev) => ({scale: Math.max(MIN_ZOOM, prev.scale - 0.5), x: 0, y: 0}));
+    }
+  };
+  const zoomInHandler = () => {
+    if (transform.scale <= MAX_ZOOM) {
+      setTransform((prev) => ({scale: Math.min(MAX_ZOOM, prev.scale + 0.5), x: 0, y: 0}));
+    }    
+  };
+
+  if (!showPreview) return null;
+
+  const loading = isLoading !== null;
+  const currentImageUrl = getUrlForId(currentSrc);
+
+  return (
+    <PreviewContainer onClick={closePreview}>
+      <PreviewClose>
+        <CloseImg onClick={closePreview} src={closeWindow} alt="Close" />
+      </PreviewClose>
+      
+      <PreviewWrapper>
+        <Pointer>
+          {
+          (previewableItems.head && (sortOptions.sortDir === "asc" ? currentSrc !== previewableItems.head.id : currentSrc !== previewableItems.tail.id)) && <PointerWrapper>
+            <PointerImg src={leftArrow} alt="Previous" onClick={handleLeftMove} />
+          </PointerWrapper>
+          }
+        </Pointer>
+        <Preview>
+          <PreviewImgContainer ref={imageContainerRef}>
+            {loading && 
+            <LoadingSpinner>
+              <Spinner>
+              </Spinner>  
+            </LoadingSpinner>
+            }
+            {currentImageUrl && <PreviewImg 
+              key={currentSrc}
+              ref={imageRef}
+              src={currentImageUrl}
+              onClick={stopPropagation} 
+              onWheel={handleScroll}
+              onMouseDown={onMouseDown}
+              onMouseMove={onMouseMove}
+              onMouseUp={onMouseUpOrLeave}
+              onMouseLeave={onMouseUpOrLeave}
+              onLoad={handleImageLoad}
+              onError={handleImageError}
+
+              style={{
+                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+                transformOrigin: '0 0', // set to center
+                cursor: getCursorStyle(),
+                display: loading ? 'none' : 'block'
+              }}
+            />}
+          </PreviewImgContainer>
+        </Preview>
+        <Pointer>
+          {
+          (previewableItems.tail && (sortOptions.sortDir === "asc" ? currentSrc !== previewableItems.tail.id : currentSrc !== previewableItems.head.id)) && <PointerWrapper>
+            <PointerImg src={rightArrow} alt="Next" onClick={handleRightMove} />
+          </PointerWrapper>
+          }
+        </Pointer>
+      </PreviewWrapper>
+      
+      <ZoomComp>
+        {/* TODO: Make the zoom buttons do something */}
+        <ZoomWrapper onClick={stopPropagation}>
+          <Zoom onClick={zoomOutHandler}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={transform.scale === MIN_ZOOM ? "#ffffff60" : "#ffffff"}>
+            <path d="M19,13H5V11H19V13Z" />
+            </svg>
+          </Zoom>
+          <ZoomImg onClick={resetTransform}><img src={zoomIcon} alt="" /></ZoomImg>
+          <Zoom onClick={zoomInHandler}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={transform.scale === MAX_ZOOM ? "#ffffff60" : "#ffffff"}>
+            <path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" />
+            </svg>
+          </Zoom>
+        </ZoomWrapper>
+      </ZoomComp>
+    </PreviewContainer>
+  );
+}
 function ProgressComp({ ref, displayMode, menuUp, menuDown}) {
 
   const [jobs, setJobs] = useState({});
@@ -2149,7 +2542,6 @@ function SelectionBox({ ref, itemRefs, grid }) {
           height: selectionBox.height,
           border: '1px solid rgba(255,255,255,0.2)',
           backgroundColor: 'rgba(134, 69, 199, 0.2)',
-          pointerEvents: 'none', // Important for allowing clicks to pass through
         }}
       />
     )

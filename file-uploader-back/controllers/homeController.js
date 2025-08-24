@@ -6,7 +6,11 @@ const { findUserById, findUserByUsername, registerUser,
   saveFolder,
   getPath,
   saveCutToDb,
-  getSearchResult} = require("../prisma/queries");
+  getSearchResult,
+  getSize,
+  getPreviewPaths,
+  getFolderPath,
+  getRootSize} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
@@ -128,7 +132,8 @@ const uploadChunk = async (req, res) => {
               }
               writeChunk(
                 fdCreated, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser, 
-                res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+                res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, 
+                path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName)
               );
             });
           } else {
@@ -138,7 +143,8 @@ const uploadChunk = async (req, res) => {
         } else {
           writeChunk(
             fd, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser,
-            res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+            res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, 
+            path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName)
             );
         }
       });
@@ -162,7 +168,7 @@ const uploadChunk = async (req, res) => {
 
 const writeChunk = (
   fd, chunkBuffer, startOffset, chunkMetaData, chunkData, 
-  user, res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath
+  user, res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, relativePath
 ) => {
   fs.write(fd, chunkBuffer, 0, chunkBuffer.length, startOffset, (writeErr, written) => {
     if (writeErr) {
@@ -178,11 +184,19 @@ const writeChunk = (
       
       
       // Update metadata after successfully writing the chunk.
-      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user, mimeType)
+      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user, mimeType, relativePath)
         .then(async (file) => {
 
+
+          // CHANGE THE RELATIVE PATH AND PREVIEW URL HERE INSTEAD OF DB
           
           if (lastChunk) {
+            
+            const tmp = await getFolderPath(file.id, 0);
+            const tempRelativePath = path.join(`/fullPreviews/${user.id}`, tmp);
+
+            file["relativePath"] = tempRelativePath;
+
             const channel = `user-notifications:${user.id}`;
             const payload = JSON.stringify({
                 event: 'file-transfer',
@@ -218,9 +232,9 @@ const writeChunk = (
   });
 };
 
-const updateUploadMeta = async (chunkMetaData, chunkData, user, mimeType) => {
+const updateUploadMeta = async (chunkMetaData, chunkData, user, mimeType, relativePath) => {
   
-  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user, mimeType);
+  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user, mimeType, relativePath);
   
 };
 
@@ -252,7 +266,10 @@ const rename = async (req, res) => {
 
   const userUploadPath = path.join(uploadPath, String(user.id));
 
+  const oldFile = await getFileById(fileId);
+  
   const orgPath = await getFullPaths([fileId], userUploadPath);
+  const orgPathWithoutBase = await getPath([fileId], 0);
   
   const fullOrgPath = orgPath ? orgPath[0] : null;
 
@@ -263,6 +280,7 @@ const rename = async (req, res) => {
 
   const newFilename = name + extension;
 
+  
   const renamedFile = await renameFile(fileId, newFilename, userUploadPath);
 
   const fullNewPath = renamedFile ? renamedFile.fullPath[0] : null;
@@ -270,22 +288,55 @@ const rename = async (req, res) => {
   if (!fullNewPath) return res.status(400).json({ message: 'Name already exists' });
 
 
+  // rename file preview in file system
   try {
+    const newPathWithoutBase = await getPath([fileId], 0);
+    
+    const oldPreviewUrl = path.join(uploadPath, `previews/${user.id}`, orgPathWithoutBase.path);
+    const newPreviewUrl = path.join(uploadPath, `previews/${user.id}`, newPathWithoutBase.path);
+    
+    const previewUrl = path.join(`/previews/${user.id}`, newPathWithoutBase.path);
+    const relativePath = path.join(`/fullPreviews/${user.id}`, newPathWithoutBase.path);
+    
+    
+    renamedFile.file["previewUrl"] = previewUrl;
+    renamedFile.file["relativePath"] = relativePath;
 
-      
-    fs.rename(fullOrgPath.path, fullNewPath.path, () => {});
+    fs.renameSync(fullOrgPath.path, fullNewPath.path, () => {});
+    fs.renameSync(oldPreviewUrl, newPreviewUrl);
       
       
   } catch (e) {
 
     const undoNameChange = await renameFile(fileId, fullOrgPath.name, userUploadPath);
-    fs.rename(fullNewPath.path, fullOrgPath.path, () => {});
+    console.error(e);
+    
 
+    return res.status(400).json({ message: 'Cannot rename' });
   }
   
 
   
-  return res.status(200).json({renamedFile: renamedFile.file});
+  return res.status(200).json({renamedFile: renamedFile.file, oldFile: oldFile});
+
+};
+
+const getPreviewableSize = async (req, res) => {
+
+  const parentId = req.params.folderId;
+  const user = res.locals.currentUser;
+
+  
+  let size = null;
+  
+  if (parentId && parentId !== "null" && parentId !== "undefined") {
+    console.log(parentId);
+    size = await getSize(Number.parseInt(parentId));
+  } else {
+    size = await getRootSize(user.id);
+  }
+
+  return res.status(200).json(size);
 
 };
 
@@ -528,39 +579,102 @@ const paste = async (req, res) => {
           return res.status(500).json({message: `Error processing file ${fileToCopy.name}: Source path not found.`});
       }
 
-      if (operationType === "copy") {
-        filePastedTemp = await saveCopyToDb(fileToCopy, destinationFolderId, dest[0].path, user);
-      } else if (operationType === "cut") {
-        filePastedTemp = await saveCutToDb(fileToCopy, destinationFolderId);
-      } else {
-        return res.status(500).json({message: "Either copy or cut allowed"});
-      }
 
       const srcItemFileSystemPath = srcFileFullPaths[0].path;
       const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
 
-      // rename instead of cpSync for cut
+
+      const previewPaths = await getPreviewPaths(destinationFolderId, fileToCopy.name, user.id);
+      const { previewUrl, relativePath, previewPathWithoutFileName } = previewPaths;
+
+      // ON FILE TRANSFER, ADD RELATIVE PATH PROPERTY TO FILE OBJECT !!!
 
       if (operationType === "copy") {
+      
         fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
+
+        filePastedTemp = await saveCopyToDb(fileToCopy, destinationFolderId, user);
+        
+        if (filePastedTemp) {
+          filePastedTemp["relativePath"] = relativePath;
+        }
+
+        const channel = `user-notifications:${user.id}`;
+        const payload = JSON.stringify({
+          event: 'file-transfer',
+          filePasted: filePastedTemp,
+          status: 'success'
+        });
+        
+        await redisPublisher.publish(channel, payload);
+
+        if (filePastedTemp.mimeType.startsWith('image/') || filePastedTemp.mimeType.startsWith('video/')) {
+          
+            const finalPath = `${uploadPath}${user.id}${previewPathWithoutFileName}`;
+            const previewPath = `${uploadPath}previews/${user.id}${previewPathWithoutFileName}`;
+            
+            
+            const finalFilePath = path.join(finalPath, filePastedTemp.name);
+            const finalPreviewPath = path.join(previewPath, filePastedTemp.name);
+            
+            await previewQueue.add('generate', {
+              user: user,
+              fileId: filePastedTemp.id,
+              filePath: finalFilePath,
+              previewPath: previewPath,
+              finalPreviewPath: finalPreviewPath,
+              mimeType: filePastedTemp.mimeType,
+              basePreviewPath: previewUrl
+            });
+    
+        } 
+
+      } else if (operationType === "cut") {
+        console.log(srcItemFileSystemPath, destItemFileSystemPath);
+        
+        fs.renameSync(srcItemFileSystemPath, destItemFileSystemPath);
+        
+        if (fileToCopy.mimeType.startsWith('image/') || fileToCopy.mimeType.startsWith('video/')) {
+
+          const oldPreviewPaths = await getPreviewPaths(fileToCopy.parentId, fileToCopy.name, user.id);
+          const newPreviewParentDir = path.join(uploadPath, 'previews', String(user.id), previewPathWithoutFileName);
+          
+          const oldPreviewPath = path.join(uploadPath, oldPreviewPaths.previewUrl);
+          const newPreviewPath = path.join(newPreviewParentDir, fileToCopy.name);
+          
+          if (fs.existsSync(oldPreviewPath)) {
+            fs.mkdirSync(path.dirname(newPreviewPath), { recursive: true });
+            fs.renameSync(oldPreviewPath, newPreviewPath);
+          }
+        }
+
+        filePastedTemp = await saveCutToDb(fileToCopy, destinationFolderId);
+
+        if (filePastedTemp) {
+          filePastedTemp["previewUrl"] = previewUrl;
+          filePastedTemp["relativePath"] = relativePath;
+        }
+
+        const channel = `user-notifications:${user.id}`;
+        const payload = JSON.stringify({
+          event: 'file-transfer',
+          filePasted: filePastedTemp,
+          status: 'success'
+        });
+        
+        await redisPublisher.publish(channel, payload);
+        
+        
       } else {
-        fs.rename(srcItemFileSystemPath, destItemFileSystemPath, () => {});
+        return res.status(500).json({message: "Either copy or cut allowed"});
       }
+
       
   } catch (error) {
       console.error(`Error pasting file '${fileToCopy.name}' (ID: ${sourceFileId}):`, error);
 
       return res.status(500).json({ message: `Failed to paste file '${fileToCopy.name}': ${error.message}` });
   }
-  
-  const channel = `user-notifications:${res.locals.currentUser.id}`;
-  const payload = JSON.stringify({
-      event: 'file-transfer',
-      filePasted: filePastedTemp,
-      status: 'success'
-  });
-
-  await redisPublisher.publish(channel, payload);
 
 
   return res.status(200).json({ message: "File pasted successfully.", filePasted: filePastedTemp });
@@ -595,10 +709,28 @@ const getFilesByParent = async (req, res) => {
 
   const { parent, take, cursor: cursorStr } = req.query;
   const cursor = cursorStr ? JSON.parse(cursorStr) : null;
+  const user = res.locals.currentUser;
 
   
   const result = await queryFilesByParent(req.user.id, parent, cursor, take);
   
+  // construct preview paths for all files
+
+  for (const file of result.files) {
+    
+    if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/")) {
+      const tempPath = await getFolderPath(file.id, 0);
+
+      const previewUrl = path.join(`/previews/${user.id}`, tempPath);
+      const relativePath = path.join(`/fullPreviews/${user.id}`, tempPath);
+
+      file["previewUrl"] = previewUrl;
+      file["relativePath"] = relativePath;
+      
+    }
+    
+  }
+
   return res.status(200).json({result: result});
 };
 
@@ -628,8 +760,30 @@ const getImagePreview = (req, res) => {
   if (!userId || !filePath) {
       return res.status(400).send('Invalid path');
   }
-
+  // console.log(filePath);
+  
   const physicalPath = path.join(uploadPath, 'previews', userId, filePath);
+  
+  res.sendFile(physicalPath, (err) => {
+    if (err) {
+      console.error(`Error sending file: ${physicalPath}`, err);
+      res.status(404).send('Preview not found');
+    }
+  });
+};
+
+const getFullPreview = (req, res) => {
+  const userId = req.params.userId;
+
+
+  const filePath = req.params[0];
+
+  
+  if (!userId || !filePath) {
+      return res.status(400).send('Invalid path');
+  }
+  
+  const physicalPath = path.join(uploadPath, userId, filePath);
 
   
   res.sendFile(physicalPath, (err) => {
@@ -674,7 +828,7 @@ const eventsUtil = (req, res) => {
     // When a message is received on the subscribed channel, send it to the client.
     subscriber.on('message', (ch, message) => {
         if (ch === channel) {
-          console.log(`Relaying message from Redis to user ${userId}:`, message);
+          // console.log(`Relaying message from Redis to user ${userId}:`, message);
           res.write(`data: ${message}\n\n`);
         }
     });
@@ -758,5 +912,7 @@ module.exports = {
     createNewFolder,
     handleSearchConnection,
     getImagePreview,
-    eventsUtil
+    getFullPreview,
+    eventsUtil,
+    getPreviewableSize
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "./AuthProvider";
-import styled from "styled-components";
+import styled, { css } from "styled-components";
 import { LoginRegisterToggle } from "./LoginRegisterToggle";
 import logo from "./assets/images/logo.png";
 import usernameImg from "./assets/images/username.svg";

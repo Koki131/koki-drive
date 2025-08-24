@@ -49,11 +49,11 @@ const getFiles = async (id) => {
 
 };
 
-const getFileById = async (id) => {
+const getFileById = async (fileId) => {
 
     const res = await prisma.file.findFirst({
         where: {
-            id: id
+            id: fileId
         }
     });
 
@@ -239,9 +239,83 @@ const fileStatus = async (parentId, user, fileName) => {
     return {chunkStart: file.chunkStart, chunkEnd: file.chunkEnd};
 
 };
+const incrementPreviewCount = async (parentId) => {
 
+    const file = await prisma.file.update({
+        where: {
+            id: parentId
+        },
+        data: {
+            previewCount: {
+                increment: 1,
+            }
+        }
+    });
+    
+};
+const decrementPreviewCount = async (parentId) => {
+    await prisma.file.update({
+        where: {
+            id: parentId
+        },
+        data: {
+            previewCount: {
+                decrement: 1,
+            }
+        }
+    });
+};
 
-const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
+const incrementPreviewCountRoot = async (userId) => {
+    const root = await prisma.root.findFirst({
+        where: {
+            userId: userId,
+        }
+    });
+
+    if (root) { 
+        await prisma.root.update({
+            where: {
+                userId: userId
+            },
+            data: {
+                previewCount: {
+                    increment: 1,
+                }
+            }
+        });
+    } else {
+        await prisma.root.create({
+            data: {
+                userId: userId,
+                previewCount: 1
+            }
+        });
+    }
+};
+
+const decrementPreviewCountRoot = async (userId) => {
+    const root = await prisma.root.findFirst({
+        where: {
+            userId: userId,
+        }
+    });
+
+    if (root) {
+        await prisma.root.update({
+            where: {
+                userId: userId
+            },
+            data: {
+                previewCount: {
+                    decrement: 1,
+                }
+            }
+        });   
+    }
+};
+ 
+const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType, relativePath) => {
 
     const parentId = obj.parentId;
     const fileName = obj.fileName;
@@ -251,6 +325,14 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
 
     if (!file) {
         
+        if (mimeType.startsWith("image/") || mimeType.startsWith("video/")) {
+            if (parentId) {
+                await incrementPreviewCount(parentId);
+            } else {
+                await incrementPreviewCountRoot(user.id);
+            }
+        }
+
         file = await prisma.file.create({
             data: {
                 name: fileName,
@@ -259,8 +341,7 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
                 parent: parentId ? {connect: {id: parentId}} : {},
                 chunkStart: chunkData.start,
                 chunkEnd: chunkData.end,
-                previewUrl: "",
-                mimeType: mimeType
+                mimeType: mimeType,
             }
         });
     } else {
@@ -286,7 +367,7 @@ const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
 
 };
 
-const updateFilePreveiw = async (fileId, user, fullPreviewPath) => {
+const updateFilePreview = async (fileId, user, fullPreviewPath) => {
 
 
     const file = await prisma.file.update({
@@ -296,15 +377,38 @@ const updateFilePreveiw = async (fileId, user, fullPreviewPath) => {
             type: "FILE"
         },
         data: {
-            previewUrl: fullPreviewPath
+            previewUrl: ""
         }
     });
 
     return file;
 
 };
+const getPreviewPaths = async (destinationFolderId, fileName, userId) => {
 
-const saveCopyToDb = async (file, parentId, destPath, user) => {
+    const previewPath = await getFolderPath(Number.parseInt(destinationFolderId), 0);
+    
+    const thumbnailPath = `/previews/${userId}${previewPath}/${fileName}`;
+    const fullPreviewPath = `/fullPreviews/${userId}${previewPath}/${fileName}`;
+    
+
+    return {previewUrl: thumbnailPath, relativePath: fullPreviewPath, previewPathWithoutFileName: previewPath};
+
+};
+
+const getFolderPath = async (id, idx) => {
+
+    if (!id) return "/";
+
+    const file = await getFileById(id);
+
+    if (idx === 0) return await getFolderPath(file.parentId, idx + 1) + file.name;
+
+    return await getFolderPath(file.parentId, idx + 1) + file.name + "/";
+    
+};
+
+const saveCopyToDb = async (file, parentId, user, previewPaths) => {
 
     const fileId = Number.parseInt(file.id);
 
@@ -326,25 +430,48 @@ const saveCopyToDb = async (file, parentId, destPath, user) => {
             }
         });
     }
+    
+    
+    let copiedFile = null;
+    
+    if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/")) {
 
-    const copiedFile = await prisma.file.create({
-        data: {
-            name: file.name,
-            type: file.type,
-            user: { connect: { id: user.id } },
-            ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
-            chunkStart: file.chunkStart,
-            chunkEnd: file.chunkEnd,
-            previewUrl: file.previewUrl,
-            mimeType: file.mimeType
+        if (parentId) {
+            await incrementPreviewCount(Number.parseInt(parentId));
+        } else {
+            await incrementPreviewCountRoot(user.id);
         }
-    });
+
+        copiedFile = await prisma.file.create({
+            data: {
+                name: file.name,
+                type: file.type,
+                user: { connect: { id: user.id } },
+                ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+                chunkStart: file.chunkStart,
+                chunkEnd: file.chunkEnd,
+                mimeType: file.mimeType
+            }
+        });
+    } else {
+        copiedFile = await prisma.file.create({
+            data: {
+                name: file.name,
+                type: file.type,
+                user: { connect: { id: user.id } },
+                ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+                chunkStart: file.chunkStart,
+                chunkEnd: file.chunkEnd,
+                mimeType: file.mimeType
+            }
+        });
+    }
 
     
 
     if (file.type === "FOLDER") {
         for (const childFile of originalChildren) {
-            await saveCopyToDb(childFile, copiedFile.id, destPath, user);
+            await saveCopyToDb(childFile, copiedFile.id, user);
         }
     }
 
@@ -352,17 +479,45 @@ const saveCopyToDb = async (file, parentId, destPath, user) => {
 
 };
 
-const saveCutToDb = async (fileToCopy, destinationFolderId) => {
+const saveCutToDb = async (fileToCopy, destinationFolderId, previewPaths) => {
 
-    return await prisma.file.update({
-        where: {
-            id: fileToCopy.id
-        },
-        data: {
-            parentId: destinationFolderId
+    let file = null;
+
+    if (!fileToCopy) return;
+
+    if (fileToCopy.mimeType.startsWith('image/') || fileToCopy.mimeType.startsWith('video/')) {
+        
+        if (fileToCopy.parentId) {
+            await decrementPreviewCount(Number.parseInt(fileToCopy.parentId));
+        } else {
+            await decrementPreviewCountRoot(fileToCopy.userId);
         }
-    })
-    
+        if (destinationFolderId) {
+            await incrementPreviewCount(Number.parseInt(destinationFolderId));
+        } else {
+            await incrementPreviewCountRoot(fileToCopy.userId);
+        }
+
+        file = await prisma.file.update({
+            where: {
+                id: fileToCopy.id
+            },
+            data: {
+                parentId: destinationFolderId,
+            }
+        });
+    } else {
+        file = await prisma.file.update({
+            where: {
+                id: fileToCopy.id
+            },
+            data: {
+                parentId: destinationFolderId,
+            }
+        });        
+    }
+   
+    return file;
     
 };
 
@@ -376,6 +531,35 @@ const conditionalPromise = async (parsedMessage) => {
             console.log("conditionalPromise: NOT resolving, will block");
         }
     });
+};
+
+const getRootSize = async (userId) => {
+
+    const size = await prisma.file.findFirst({
+        where: {
+            userId: userId
+        },
+        select: {
+            previewCount: true
+        }
+    });
+
+    return size;
+};
+
+const getSize = async (parentId) => {
+
+    const size = await prisma.file.findFirst({
+        where: {
+            id: parentId
+        },
+        select: {
+            previewCount: true
+        }
+    });
+
+    return size;
+
 };
 
 const getSearchResult = async (message, user) => {
@@ -464,6 +648,8 @@ const getFullPaths = async (fileIds, orgPath) => {
 
 };
 
+const getFullPreviewPaths = async () => {};
+
 const getPath = async (fileId, idx) => {
 
     const file = await getFileById(Number.parseInt(fileId));
@@ -491,6 +677,7 @@ const renameFile = async (fileId, newName, orgPath) => {
         }
     });
 
+
     const res = await prisma.file.findFirst({
         where: {
             parentId: file.parentId,
@@ -501,27 +688,53 @@ const renameFile = async (fileId, newName, orgPath) => {
     if (res) {
         return null;
     }
-    
-    const updateName = await prisma.file.update({
-        where: {
-            id: fileId
-        },
-        data: {
-            name: newName
-        }
-    });
 
-    return updateName ? {fullPath: await getFullPaths([fileId], orgPath), file: file} : null;
+    // const { previewUrl, relativePath, previewPathWithoutFileName } = await getPreviewPaths(file.parentId, newName, file.userId);
+    
+    let updateName = null;
+
+    if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/")) {
+       updateName = await prisma.file.update({
+            where: {
+                id: fileId
+            },
+            data: {
+                name: newName,
+            }
+        });
+    } else {
+       updateName = await prisma.file.update({
+            where: {
+                id: fileId
+            },
+            data: {
+                name: newName,
+            }
+        });        
+    }
+    
+
+    return updateName ? {fullPath: await getFullPaths([fileId], orgPath), file: updateName} : null;
 
 };
 
 const deleteFile = async (fileId) => {
 
-    await prisma.file.delete({
+    const file = await prisma.file.delete({
         where: {
             id: fileId
         }
     });
+
+    if ((file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/"))) {
+        if (file) {
+            if (file.parentId) {
+                await decrementPreviewCount(Number.parseInt(file.parentId));
+            } else {
+                await decrementPreviewCountRoot(file.userId);
+            }
+        } 
+    }
 
 };
 
@@ -545,5 +758,9 @@ module.exports = {
     renameFile,
     deleteFile,
     getSearchResult,
-    updateFilePreveiw
+    updateFilePreview,
+    getPreviewPaths,
+    getFolderPath,
+    getSize,
+    getRootSize
 }
