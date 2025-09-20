@@ -32,7 +32,7 @@ homeRouter.post("/createNewFolder", createNewFolder);
 homeRouter.get("/events", eventsUtil)
 homeRouter.get("/getFilesByParent", getFilesByParent);
 homeRouter.get("/previews/:userId/*", getImagePreview);
-homeRouter.get("/fullPreviews/:userId/*", getFullPreview);
+homeRouter.get("/fullPreviews/:userId/:fileId/*", getFullPreview);
 homeRouter.get("/getPreviewableSize/:folderId", getPreviewableSize);
 homeRouter.get("/isUserAuthenticated", isAuth);
 

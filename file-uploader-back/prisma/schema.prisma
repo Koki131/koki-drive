@@ -35,11 +35,12 @@ model File {
   userId        Int      
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  chunkStart    String @default("")
-  chunkEnd      String @default("")
+  chunkStart    String    @default("")
+  chunkEnd      String    @default("")
 
-  mimeType      String @default("")
-  previewCount  Int    @default(0)
+  mimeType      String    @default("")
+  previewCount  Int       @default(0)
+  status        Boolean   @default(false)
   
   @@index([parentId, name])
   @@unique([parentId, name, type])

@@ -89,8 +89,9 @@ const filesReducer = (state, action) => {
         const newFolders = state.folders.clone();
         const newFiles = state.files.clone();
 
-        let {newFile, oldFile, name, previewableItems} = action.payload;
-
+        let {newFile, oldFile, name} = action.payload;
+        
+        
         
         if (oldFile.type === "FOLDER") {
             newFolders.delete(oldFile);

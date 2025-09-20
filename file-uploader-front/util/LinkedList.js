@@ -7,9 +7,9 @@ class LinkedList {
         this.idToNode = {};
     }
 
-    add(id, value) {
+    add(id, value, mimeType, status) {
         
-        const node = new Node(id, value);
+        const node = new Node(id, value, mimeType, status);
         
         if (!this.idToNode[id]) {
             this.idToNode[id] = node;
@@ -80,9 +80,11 @@ class LinkedList {
 }
 
 class Node {
-    constructor(id, value) {
+    constructor(id, value, mimeType, status) {
         this.id = id;
         this.value = value;
+        this.mimeType = mimeType;
+        this.status = status;
         this.next = null;
         this.prev = null;
     }

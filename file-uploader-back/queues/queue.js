@@ -9,4 +9,8 @@ const connection = new IORedis({
 
 const previewQueue = new Queue('preview-generation', { connection });
 
-module.exports = previewQueue;
+const videoQueue = new Queue('video-generation', { connection });
+
+
+
+module.exports = { previewQueue, videoQueue };

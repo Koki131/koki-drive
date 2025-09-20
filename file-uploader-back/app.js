@@ -14,10 +14,12 @@ const cors = require("cors");
 const http = require("http");
 
 const { findUserById, findUserByUsername } = require("./prisma/queries");
-
 const assetsPath = path.join(__dirname, "public");
 const prisma = new PrismaClient();
 const app = express();
+
+const uploadPath = process.env.UPLOAD_PATH;
+const hlsStoragePath = path.join(uploadPath, 'videos');
 
 
 const server = http.createServer(app);
@@ -50,6 +52,9 @@ const sessionMiddleware = session({
 app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");
 app.use(express.static(assetsPath));
+
+app.use('/hls-content', express.static(hlsStoragePath));
+
 
 app.use(sessionMiddleware);
 app.use(passport.initialize());

@@ -1,5 +1,5 @@
-const { PrismaClient } = require('@prisma/client')
-
+const { PrismaClient } = require('@prisma/client');
+const path = require('path');
 const prisma = new PrismaClient();
 
 
@@ -315,7 +315,20 @@ const decrementPreviewCountRoot = async (userId) => {
     }
 };
  
-const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType, relativePath) => {
+const updateStatus = async (fileId) => {
+
+    return await prisma.file.update({
+        where: {
+            id: fileId
+        },
+        data: {
+            status: true
+        }
+    });
+
+};
+
+const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
 
     const parentId = obj.parentId;
     const fileName = obj.fileName;
@@ -384,12 +397,24 @@ const updateFilePreview = async (fileId, user, fullPreviewPath) => {
     return file;
 
 };
-const getPreviewPaths = async (destinationFolderId, fileName, userId) => {
+const getPreviewPaths = async (destinationFolderId, fileName, fileId, userId) => {
 
     const previewPath = await getFolderPath(Number.parseInt(destinationFolderId), 0);
     
-    const thumbnailPath = `/previews/${userId}${previewPath}/${fileName}`;
-    const fullPreviewPath = `/fullPreviews/${userId}${previewPath}/${fileName}`;
+    const thumbnailPath = path.join('/previews', `${userId}`, previewPath, fileName);
+    const fullPreviewPath = path.join('/fullPreviews', `${userId}`, `${fileId}`, previewPath, fileName);
+    
+
+    return {previewUrl: thumbnailPath, relativePath: fullPreviewPath, previewPathWithoutFileName: previewPath};
+
+};
+
+const getVideoPaths = async (destinationFolderId, fileName, fileId, userId) => {
+
+    const previewPath = await getFolderPath(Number.parseInt(destinationFolderId), 0);
+    
+    const thumbnailPath = path.join('/previews', `${userId}`, previewPath, fileName);
+    const fullPreviewPath = path.join('/fullPreviews', `${userId}`, `${fileId}`, previewPath, fileName);
     
 
     return {previewUrl: thumbnailPath, relativePath: fullPreviewPath, previewPathWithoutFileName: previewPath};
@@ -450,7 +475,8 @@ const saveCopyToDb = async (file, parentId, user, previewPaths) => {
                 ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
                 chunkStart: file.chunkStart,
                 chunkEnd: file.chunkEnd,
-                mimeType: file.mimeType
+                mimeType: file.mimeType,
+                status: file.status
             }
         });
     } else {
@@ -504,6 +530,7 @@ const saveCutToDb = async (fileToCopy, destinationFolderId, previewPaths) => {
             },
             data: {
                 parentId: destinationFolderId,
+                status: fileToCopy.status
             }
         });
     } else {
@@ -641,7 +668,7 @@ const getFullPaths = async (fileIds, orgPath) => {
         const type = temp.type;
         const name = temp.name;
         
-        res.push({path: path, type: type, name: name});
+        res.push({path: path, type: type, name: name, fileId: id});
     }
     
     return res;
@@ -700,6 +727,7 @@ const renameFile = async (fileId, newName, orgPath) => {
             },
             data: {
                 name: newName,
+                status: file.status
             }
         });
     } else {
@@ -762,5 +790,6 @@ module.exports = {
     getPreviewPaths,
     getFolderPath,
     getSize,
-    getRootSize
+    getRootSize,
+    updateStatus
 }

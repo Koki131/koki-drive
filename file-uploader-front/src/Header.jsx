@@ -7,6 +7,7 @@ import styled, { keyframes } from "styled-components";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { BST } from '../util/BST';
+import LinkedList from "../util/LinkedList";
 
 const apiUrl = import.meta.env.VITE_API_URL;
 
@@ -246,30 +247,28 @@ function debounce(func, wait) {
   export default function Header({ 
     files, dispatch, isLoading, setIsLoading, updateFiles, setUpdateFiles, 
     fileContainerRef, calculatedInitialTake,
-    nextCursor, lazyLoadState
+    nextCursor, lazyLoadState, totalSearchPreviewCount, hasMore, isLoadingMoreRef,
+    searchValue, setSearchValue, previewableItemsRef, continueSearch
 }) {
 
     const { folderId } = useParams();
     const { logout, toggle, displayMode } = useAuth();
-    const [searchValue, setSearchValue] = useState("");
-    const hasMore = useRef(true);
 
-    const isLoadingMoreRef = useRef(false);
     
     useEffect(() => {
         setSearchValue("");
     }, [folderId, updateFiles]);
     
-    const executeSearch = async (query) => {
+    const executeSearch = useCallback(async (query) => {
         
-        if (!calculatedInitialTake.current) return;
+        if (!calculatedInitialTake.current || isLoading || isLoadingMoreRef.current) return;
 
         lazyLoadState.current = "search";
         hasMore.current = true; 
         nextCursor.current = null;
 
+        dispatch({type: 'init-load', payload: {folders: new BST(0), files: new BST(0)}});
         if (!query.trim()) {
-            setFiles(new BST(0));
             setIsLoading(false); 
             isLoadingMoreRef.current = false;
             setUpdateFiles(prev => !prev);
@@ -277,119 +276,71 @@ function debounce(func, wait) {
             return;
         }
 
-        setFiles(new BST(0));
         setIsLoading(true);
         isLoadingMoreRef.current = true;
-
-
-        try {            
+        
+        try {       
+            
             const req = await fetch(`${apiUrl}/search`, {
                 method: "POST",
                 headers: {"Content-Type":"application/json"},
                 credentials: "include",
-
-                body: JSON.stringify({ searchTerm: query, take: calculatedInitialTake.current })
+                body: JSON.stringify({ searchTerm: query, take: calculatedInitialTake.current, searchType: "init" })
             });
             if (!req.ok) {
-                throw new Error(`HTTP error! status: ${request.status}`);
-              }
+                throw new Error(`HTTP error! status: ${req.status}`);
+            }
             const res = await req.json();
-            const { files: initialFiles, nextCursor: initialNextCursor } = res.result;
-
-            nextCursor.current = initialNextCursor;
             
-            hasMore.current = !!initialNextCursor;
+            totalSearchPreviewCount.current = res.totalPreviews;
 
-            const bst = new BST(calculatedInitialTake.current);
+            const { files: initialFiles, nextCursor: initialNextCursor } = res.result;
+            
+
+            const newFolders = new BST(calculatedInitialTake.current);
+            const newFiles = new BST(calculatedInitialTake.current);
             
             for (const file of initialFiles) {
-              bst.add(file);
+              if (file.type === 'FOLDER') {
+                newFolders.add(file);
+              } else {
+                newFiles.add(file);
+                if (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/") || file.mimeType.startsWith("audio/")) {
+
+                  previewableItemsRef.current.add(file.id, file.relativePath, file.mimeType, file.status);
+                  
+                }
+              }
             }
             
-            setFiles(bst);
+            nextCursor.current = initialNextCursor;
+            hasMore.current = !!nextCursor.current;
+            
+            dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
 
         } catch (error) {
-            console.error("Error fetching initial search files:", e);
-            setFiles(new BST(0));
+            console.error("Error fetching initial search files:", error);
+            dispatch({type: 'init-load', payload: {folders: new BST(0), files: new BST(0)}});
         } finally {
             setIsLoading(false);
             isLoadingMoreRef.current = false;
         }
 
 
-    };
+    }, [
+        dispatch,
+        setIsLoading,
+        setUpdateFiles,
+        lazyLoadState,
+        calculatedInitialTake,
+        nextCursor,
+    ]);
 
     const debouncedExecuteSearch = useMemo(() => {
         return debounce(executeSearch, 500);
     }, [executeSearch]);
 
-    const continueSearch = useCallback(async () => {
-        
-
-        if (!hasMore.current || isLoadingMoreRef.current || isLoading || lazyLoadState.current === "list") {
-            return;
-        }
-
-
-        const container = fileContainerRef.current;
-        const { scrollTop, scrollHeight, clientHeight } = container;
-        const buffer = 5;
-        
-        if (scrollTop + clientHeight >= scrollHeight - buffer) {
-            
-            setIsLoading(true);
-            isLoadingMoreRef.current = true;
-
-            const itemsPerPage = 30;
-
-            try {                
-                const req = await fetch(`${apiUrl}/search`, {
-                    method: "POST",
-                    headers: {"Content-Type":"application/json"},
-                    credentials: "include",
-
-                    body: JSON.stringify({
-                        searchTerm: searchValue, 
-                        take: itemsPerPage,
-                        cursor: nextCursor.current // Send the cursor for the next page
-                    })
-                });
-
-                if (!req.ok) {
-                    throw new Error(`HTTP error! status: ${req.status}`);
-                }
-                const res = await req.json();
-                
-                const { files: newFiles, nextCursor: newNextCursor } = res.result;
-
-                if (newFiles && newFiles.length > 0) {
-                    setFiles(currentBst => {
-                        const newBst = currentBst.clone();
-                        
-                        for (const file of newFiles) {
-                            const fileNode = newBst.find(file);
-                            if (!fileNode) {
-                                newBst.add(file);
-                            }
-                        }
-                        return newBst;
-                    });
-                }
-                
-                nextCursor.current = newNextCursor;
-                hasMore.current = !!newNextCursor;
-
-            } catch (error) {
-                console.error("Error continuing search:", error);
-            } finally {
-                setIsLoading(false);
-                isLoadingMoreRef.current = false;
-            }
-            
-
-        }
-    }, [searchValue, setIsLoading, isLoading]); 
-
+   
     
 
     const handleSearchInputChange = (e) => {
@@ -422,7 +373,7 @@ function debounce(func, wait) {
     useEffect(() => {
         const currentFileContainer = fileContainerRef.current;
 
-        if (currentFileContainer && !isLoadingMoreRef.current && hasMore.current && lazyLoadState.current === "search") { 
+        if (!isLoading && currentFileContainer && !isLoadingMoreRef.current && hasMore.current && lazyLoadState.current === "search") { 
 
             currentFileContainer.addEventListener("scroll", continueSearch);
             

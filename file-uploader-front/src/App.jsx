@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import './App.css'
 import styled from 'styled-components'
 import Header from './Header'
@@ -6,7 +6,9 @@ import Content from './Content'
 import { BST } from '../util/BST'
 import { useParams } from 'react-router'
 import filesReducer from '../util/FilesReducer'
+import LinkedList from '../util/LinkedList'
 
+const apiUrl = import.meta.env.VITE_API_URL;
 const StyledAppContainer = styled.div`
   height: 100vh;
   display: flex;
@@ -19,11 +21,20 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [files, dispatch] = useReducer(filesReducer, {folders: new BST(0), files: new BST(0)});
   const [updateFiles, setUpdateFiles] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
   const nextCursor = useRef(null);
   const calculatedInitialTake = useRef(null);
   const lazyLoadStateRef = useRef("list");
   const fileContainerRef = useRef(null);
+  const totalSearchPreviewCount = useRef(-1);
+  const hasMore = useRef(true);
+  const isLoadingMoreRef = useRef(false);
+  const previewableItemsRef = useRef(new LinkedList());
 
+  useEffect(() => {
+    previewableItemsRef.current = new LinkedList();
+    hasMore.current = true;
+  }, [lazyLoadStateRef.current]);
 
   useEffect(() => {
 
@@ -57,7 +68,82 @@ function App() {
 
     handleResize();
 
-}, [fileContainerRef.current]);
+  }, [fileContainerRef.current]);
+
+  const continueSearch = useCallback(async (carousel) => {
+          
+
+      // if (!hasMore.current || isLoadingMoreRef.current || isLoading || lazyLoadState.current === "list") {
+      //     return;
+      // }
+
+      console.log("test");
+      
+      const container = fileContainerRef.current;
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const buffer = 5;
+      
+      if ((scrollTop + clientHeight >= scrollHeight - buffer) || carousel) {
+          
+          setIsLoading(true);
+          isLoadingMoreRef.current = true;
+
+          const itemsPerPage = 30;
+
+          try {                
+              const req = await fetch(`${apiUrl}/search`, {
+                  method: "POST",
+                  headers: {"Content-Type":"application/json"},
+                  credentials: "include",
+
+                  body: JSON.stringify({
+                      searchTerm: searchValue, 
+                      take: itemsPerPage,
+                      cursor: nextCursor.current
+                  })
+              });
+
+              if (!req.ok) {
+                  throw new Error(`HTTP error! status: ${req.status}`);
+              }
+              const res = await req.json();
+              totalSearchPreviewCount.current = res.totalPreviews;
+              const { files: newFiles, nextCursor: newCursor } = res.result;
+
+              let filesToAdd = null;
+
+              if (newFiles && newFiles.length > 0) {  
+                  filesToAdd = newFiles;
+              }
+      
+      
+              nextCursor.current = newCursor;
+              if (!newCursor) {
+                  hasMore.current = false;
+              }            
+
+              if (filesToAdd.length > 0) {
+              
+                  for (const file of filesToAdd) {
+                      if (file.mimeType && (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/") || file.mimeType.startsWith("audio/"))) {
+                          previewableItemsRef.current.add(file.id, file.relativePath, file.mimeType, file.status);
+                          
+                      }
+                  }
+
+                  dispatch({ type: 'lazy-load', payload: filesToAdd });
+              }
+
+          } catch (error) {
+              console.error("Error continuing search:", error);
+          } finally {
+              setIsLoading(false);
+              isLoadingMoreRef.current = false;
+          }
+          
+
+      }
+    }, [searchValue, setIsLoading, isLoading]); 
 
   return (
     <StyledAppContainer>
@@ -66,8 +152,14 @@ function App() {
        fileContainerRef={fileContainerRef}
        calculatedInitialTake={calculatedInitialTake}
        nextCursor={nextCursor}
-      //  setNextCursor={setNextCursor}
        lazyLoadState={lazyLoadStateRef}
+       totalSearchPreviewCount={totalSearchPreviewCount}
+       hasMore={hasMore}
+       isLoadingMoreRef={isLoadingMoreRef}
+       searchValue={searchValue}
+       setSearchValue={setSearchValue}
+       previewableItemsRef={previewableItemsRef}
+       continueSearch={continueSearch}
        />
       <Content 
         files={files}
@@ -79,8 +171,12 @@ function App() {
         fileContainerRef={fileContainerRef}
         calculatedInitialTake={calculatedInitialTake}
         nextCursor={nextCursor}
-        // setNextCursor={setNextCursor}
         lazyLoadState={lazyLoadStateRef}
+        totalSearchPreviewCount={totalSearchPreviewCount}
+        hasMore={hasMore}
+        isLoadingMoreRef={isLoadingMoreRef}
+        previewableItemsRef={previewableItemsRef}
+        continueSearch={continueSearch}
       />
     </StyledAppContainer>
   );

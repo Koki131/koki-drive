@@ -10,18 +10,21 @@ const { findUserById, findUserByUsername, registerUser,
   getSize,
   getPreviewPaths,
   getFolderPath,
-  getRootSize} = require("../prisma/queries");
+  getRootSize,
+  updateStatus} = require("../prisma/queries");
 const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
 const archiver = require('archiver');
-const previewQueue = require('../queues/queue');
+const { previewQueue, videoQueue } = require('../queues/queue');
 const IORedis = require('ioredis');
+const { foldl } = require("async");
 require('dotenv').config()
 
 const redisPublisher = new IORedis({ host: 'localhost', port: 6379 });
 
 const uploadPath = process.env.UPLOAD_PATH;
+
 
 const savePath = async (req, res) => {
 
@@ -79,16 +82,19 @@ const checkFileStatus = async (req, res) => {
 const uploadChunk = async (req, res) => {
 
   const bb = busboy({ headers: req.headers });
-  let metaData;
+  let metaData, videoConfirmData;
 
   bb.on('field', (name, value) => {    
     if (name === 'meta_data') metaData = value;
+    if (name === 'video_confirm_data') videoConfirmData = value;
+    
   });
 
   bb.on('file', (fieldname, file, info) => {
 
     const { relativePath, fileName, chunkMetaData, chunkData, lastChunk, mimeType } = JSON.parse(metaData);
-
+    const parsedVideoConfirmData = JSON.parse(videoConfirmData);
+    
     
     const finalPath = `${uploadPath}${res.locals.currentUser.id}/${relativePath}`;
     const basePreviewPath = `/previews/${res.locals.currentUser.id}/${relativePath}`;
@@ -133,7 +139,7 @@ const uploadChunk = async (req, res) => {
               writeChunk(
                 fdCreated, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser, 
                 res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, 
-                path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName)
+                path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName), parsedVideoConfirmData
               );
             });
           } else {
@@ -144,7 +150,7 @@ const uploadChunk = async (req, res) => {
           writeChunk(
             fd, chunkBuffer, startOffset, chunkMetaData, chunkData, res.locals.currentUser,
             res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, 
-            path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName)
+            path.join("/fullPreviews", `${res.locals.currentUser.id}`, relativePath, fileName), parsedVideoConfirmData
             );
         }
       });
@@ -168,7 +174,7 @@ const uploadChunk = async (req, res) => {
 
 const writeChunk = (
   fd, chunkBuffer, startOffset, chunkMetaData, chunkData, 
-  user, res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, relativePath
+  user, res, finalFilePath, previewPath, finalPreviewPath, lastChunk, mimeType, finalBasePreviewPath, relativePath, parsedVideoConfirmData
 ) => {
   fs.write(fd, chunkBuffer, 0, chunkBuffer.length, startOffset, (writeErr, written) => {
     if (writeErr) {
@@ -184,7 +190,7 @@ const writeChunk = (
       
       
       // Update metadata after successfully writing the chunk.
-      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user, mimeType, relativePath)
+      updateUploadMeta(JSON.parse(chunkMetaData), JSON.parse(chunkData), user, mimeType)
         .then(async (file) => {
 
 
@@ -193,7 +199,7 @@ const writeChunk = (
           if (lastChunk) {
             
             const tmp = await getFolderPath(file.id, 0);
-            const tempRelativePath = path.join(`/fullPreviews/${user.id}`, tmp);
+            const tempRelativePath = path.join(`/fullPreviews/${user.id}/${file.id}`, tmp);
 
             file["relativePath"] = tempRelativePath;
 
@@ -207,6 +213,28 @@ const writeChunk = (
             await redisPublisher.publish(channel, payload);
             
             if (mimeType.startsWith('image/') || mimeType.startsWith('video/')) {
+
+              if ((parsedVideoConfirmData.yesToAll || parsedVideoConfirmData.makeRenditionsCurrentVideo) && mimeType.startsWith('video/')) {
+                
+                const parentPath = await getFolderPath(file.parentId, 0);
+
+                const parsedName = path.parse(file.name);
+
+                const fullPath = path.join(parentPath, parsedName.name);
+
+                const output = path.join(uploadPath, 'videos', `${user.id}`, fullPath);
+                
+                
+                fs.mkdirSync(output, { recursive: true });
+
+                await videoQueue.add('generate', {
+                  inputPath: finalFilePath,
+                  outputPath: output,
+                  file: file,
+                  userId: user.id
+                });
+              }
+
               await previewQueue.add('generate', {
                 user: user,
                 fileId: file.id,
@@ -232,9 +260,9 @@ const writeChunk = (
   });
 };
 
-const updateUploadMeta = async (chunkMetaData, chunkData, user, mimeType, relativePath) => {
+const updateUploadMeta = async (chunkMetaData, chunkData, user, mimeType) => {
   
-  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user, mimeType, relativePath);
+  return await saveOrUpdateChunkedFileToDb(chunkMetaData, chunkData, user, mimeType);
   
 };
 
@@ -272,17 +300,12 @@ const rename = async (req, res) => {
   const orgPathWithoutBase = await getPath([fileId], 0);
   
   const fullOrgPath = orgPath ? orgPath[0] : null;
-
+  
   if (!fullOrgPath) return res.status(400).json({ message: "File doesn't exist"});
   
   
-  const extension = fullOrgPath && fullOrgPath.type === 'FILE' ? path.extname(fullOrgPath.name) : "";
-
-  const newFilename = name + extension;
-
+  const renamedFile = await renameFile(fileId, name.trim(), userUploadPath);
   
-  const renamedFile = await renameFile(fileId, newFilename, userUploadPath);
-
   const fullNewPath = renamedFile ? renamedFile.fullPath[0] : null;
   
   if (!fullNewPath) return res.status(400).json({ message: 'Name already exists' });
@@ -292,19 +315,40 @@ const rename = async (req, res) => {
   try {
     const newPathWithoutBase = await getPath([fileId], 0);
     
-    const oldPreviewUrl = path.join(uploadPath, `previews/${user.id}`, orgPathWithoutBase.path);
-    const newPreviewUrl = path.join(uploadPath, `previews/${user.id}`, newPathWithoutBase.path);
+    const oldPreviewPath = path.join(uploadPath, 'previews', `${user.id}`, orgPathWithoutBase.path);
+    const newPreviewPath = path.join(uploadPath, 'previews', `${user.id}`, newPathWithoutBase.path);
+
     
-    const previewUrl = path.join(`/previews/${user.id}`, newPathWithoutBase.path);
-    const relativePath = path.join(`/fullPreviews/${user.id}`, newPathWithoutBase.path);
+    const previewUrl = path.join('/previews', `${user.id}`, newPathWithoutBase.path);
+    const relativePath = path.join('/fullPreviews', `${user.id}`, `${fileId}`, newPathWithoutBase.path);
     
+    const oldParsedName = path.parse(oldFile.name);
+    const oldParentPath = await getFolderPath(oldFile.parentId, 0);
+
+    const parsedName = path.parse(renamedFile.file.name);
+    const parentPath = await getFolderPath(renamedFile.file.parentId, 0);
+
+    
+    const oldVideoPath = path.join(uploadPath, 'videos', `${user.id}`, path.join(oldParentPath, oldParsedName.name));
+    const newVideoPath = path.join(uploadPath, 'videos', `${user.id}`, path.join(parentPath, parsedName.name));
+
+    const masterRelativePath = path.join(`/hls-content/${user.id}`, path.join(parentPath, parsedName.name), 'master.m3u8');
+
+    
+    
+    
+    fs.renameSync(fullOrgPath.path, fullNewPath.path);
+    
+    if (fs.existsSync(oldPreviewPath)) {
+      fs.renameSync(oldPreviewPath, newPreviewPath);
+    }
+    if (fs.existsSync(oldVideoPath)) {
+      fs.renameSync(oldVideoPath, newVideoPath);
+    }
     
     renamedFile.file["previewUrl"] = previewUrl;
-    renamedFile.file["relativePath"] = relativePath;
-
-    fs.renameSync(fullOrgPath.path, fullNewPath.path, () => {});
-    fs.renameSync(oldPreviewUrl, newPreviewUrl);
-      
+    renamedFile.file["relativePath"] = renamedFile.file.status ? masterRelativePath : relativePath;
+  
       
   } catch (e) {
 
@@ -330,7 +374,6 @@ const getPreviewableSize = async (req, res) => {
   let size = null;
   
   if (parentId && parentId !== "null" && parentId !== "undefined") {
-    console.log(parentId);
     size = await getSize(Number.parseInt(parentId));
   } else {
     size = await getRootSize(user.id);
@@ -352,9 +395,38 @@ const deleteFiles = async (req, res) => {
   const errors = [];
 
   for (const file of filePaths) {
-  
-      
+    
+    const fullFile = await getFileById(file.fileId);
+
+    const folderPath = await getFolderPath(fullFile.id, 0);
+    const parentPath = await getFolderPath(fullFile.parentId, 0);
+
+    const previewPath = path.join(uploadPath, 'previews', `${user.id}`, folderPath);
+    const parsedName = path.parse(file.name);
+    const videoPath = path.join(uploadPath, 'videos', `${user.id}`, parentPath, parsedName.name);
+    
+    
+    
     if (file.type === 'FILE') {
+      if (fs.existsSync(previewPath)) {
+        fs.unlink(previewPath, (err) => {
+        if (err) {
+          errors.push(`Unable to delete ${file.name}`);
+          console.error(`Error deleting file ${file.path}:`, err);
+        }
+        });
+      }
+
+      if (fs.existsSync(videoPath)) {
+        fs.rm(videoPath, { recursive: true }, (err) => {
+        if (err) {
+          errors.push(`Unable to delete ${file.name}`);
+          console.error(`Error deleting file ${file.path}:`, err);
+        }
+        });
+      }
+
+
       fs.unlink(file.path, (err) => {
         if (err) {
           errors.push(`Unable to delete ${file.name}`);
@@ -362,6 +434,23 @@ const deleteFiles = async (req, res) => {
         }
       });
     } else {
+
+      if (fs.existsSync(previewPath)) {
+        fs.rm(previewPath, {recursive: true}, (err) => {
+          if (err) {
+            errors.push(`Unable to delete ${file.name}`);
+            console.error(`Error deleting file ${file.path}:`, err);
+          } 
+        });
+      }
+      if (fs.existsSync(videoPath)) {
+        fs.rm(videoPath, {recursive: true}, (err) => {
+          if (err) {
+            errors.push(`Unable to delete ${file.name}`);
+            console.error(`Error deleting file ${file.path}:`, err);
+          } 
+        });
+      }
       fs.rm(file.path, {recursive: true}, (err) => {
         if (err) {
           errors.push(`Unable to delete ${file.name}`);
@@ -583,91 +672,104 @@ const paste = async (req, res) => {
       const srcItemFileSystemPath = srcFileFullPaths[0].path;
       const destItemFileSystemPath = path.join(dest[0].path, fileToCopy.name);
 
+      const oldPreviewPaths = await getPreviewPaths(fileToCopy.parentId, fileToCopy.name, fileToCopy.id, user.id);
 
-      const previewPaths = await getPreviewPaths(destinationFolderId, fileToCopy.name, user.id);
-      const { previewUrl, relativePath, previewPathWithoutFileName } = previewPaths;
 
-      // ON FILE TRANSFER, ADD RELATIVE PATH PROPERTY TO FILE OBJECT !!!
+      fs.mkdirSync(dest[0].path, { recursive: true });
 
       if (operationType === "copy") {
       
         fs.cpSync(srcItemFileSystemPath, destItemFileSystemPath, { recursive: true });
 
         filePastedTemp = await saveCopyToDb(fileToCopy, destinationFolderId, user);
+
+        const previewPaths = await getPreviewPaths(destinationFolderId, filePastedTemp.name, filePastedTemp.id, user.id);
+        const { previewUrl, relativePath, previewPathWithoutFileName } = previewPaths;
+
+        const oldPreviewPath = path.join(`${uploadPath}`, oldPreviewPaths.previewUrl);
+        const newPreviewPath = path.join(`${uploadPath}`, 'previews', `${user.id}`, previewPathWithoutFileName, filePastedTemp.name);
+
+        const parsedName = path.parse(filePastedTemp.name);
+        const oldVideoPath = path.join(`${uploadPath}`, 'videos', `${user.id}`, oldPreviewPaths.previewPathWithoutFileName, parsedName.name);
+        const newVideoPath = path.join(`${uploadPath}`, 'videos', `${user.id}`, previewPathWithoutFileName, parsedName.name);
+
+        const masterRelativePath = path.join(`/hls-content/${user.id}`, previewPathWithoutFileName, parsedName.name, 'master.m3u8');     
         
-        if (filePastedTemp) {
-          filePastedTemp["relativePath"] = relativePath;
+        if (fs.existsSync(oldPreviewPath)) {
+
+          fs.cpSync(oldPreviewPath, newPreviewPath, { recursive: true });
+          
         }
-
-        const channel = `user-notifications:${user.id}`;
-        const payload = JSON.stringify({
-          event: 'file-transfer',
-          filePasted: filePastedTemp,
-          status: 'success'
-        });
         
-        await redisPublisher.publish(channel, payload);
-
-        if (filePastedTemp.mimeType.startsWith('image/') || filePastedTemp.mimeType.startsWith('video/')) {
-          
-            const finalPath = `${uploadPath}${user.id}${previewPathWithoutFileName}`;
-            const previewPath = `${uploadPath}previews/${user.id}${previewPathWithoutFileName}`;
-            
-            
-            const finalFilePath = path.join(finalPath, filePastedTemp.name);
-            const finalPreviewPath = path.join(previewPath, filePastedTemp.name);
-            
-            await previewQueue.add('generate', {
-              user: user,
-              fileId: filePastedTemp.id,
-              filePath: finalFilePath,
-              previewPath: previewPath,
-              finalPreviewPath: finalPreviewPath,
-              mimeType: filePastedTemp.mimeType,
-              basePreviewPath: previewUrl
-            });
-    
-        } 
-
-      } else if (operationType === "cut") {
-        console.log(srcItemFileSystemPath, destItemFileSystemPath);
-        
-        fs.renameSync(srcItemFileSystemPath, destItemFileSystemPath);
-        
-        if (fileToCopy.mimeType.startsWith('image/') || fileToCopy.mimeType.startsWith('video/')) {
-
-          const oldPreviewPaths = await getPreviewPaths(fileToCopy.parentId, fileToCopy.name, user.id);
-          const newPreviewParentDir = path.join(uploadPath, 'previews', String(user.id), previewPathWithoutFileName);
-          
-          const oldPreviewPath = path.join(uploadPath, oldPreviewPaths.previewUrl);
-          const newPreviewPath = path.join(newPreviewParentDir, fileToCopy.name);
-          
-          if (fs.existsSync(oldPreviewPath)) {
-            fs.mkdirSync(path.dirname(newPreviewPath), { recursive: true });
-            fs.renameSync(oldPreviewPath, newPreviewPath);
-          }
+        if (fs.existsSync(oldVideoPath)) {
+          fs.cpSync(oldVideoPath, newVideoPath, { recursive: true });
+          await updateStatus(filePastedTemp.id);
         }
-
-        filePastedTemp = await saveCutToDb(fileToCopy, destinationFolderId);
-
+        
         if (filePastedTemp) {
           filePastedTemp["previewUrl"] = previewUrl;
-          filePastedTemp["relativePath"] = relativePath;
-        }
-
-        const channel = `user-notifications:${user.id}`;
-        const payload = JSON.stringify({
-          event: 'file-transfer',
-          filePasted: filePastedTemp,
-          status: 'success'
-        });
+          filePastedTemp["relativePath"] = filePastedTemp.status ? masterRelativePath : relativePath;
+        }  
         
-        await redisPublisher.publish(channel, payload);
+      } else if (operationType === "cut") {
+        
+        fs.renameSync(srcItemFileSystemPath, destItemFileSystemPath);
+
+        filePastedTemp = await saveCutToDb(fileToCopy, destinationFolderId);
+        
+        const previewPaths = await getPreviewPaths(destinationFolderId, filePastedTemp.name, filePastedTemp.id, user.id);
+        const { previewUrl, relativePath, previewPathWithoutFileName } = previewPaths;
+
+        const newPreviewParentDir = path.join(uploadPath, 'previews', String(user.id), previewPathWithoutFileName);
+        
+        const oldPreviewPath = path.join(uploadPath, oldPreviewPaths.previewUrl);
+        const newPreviewPath = path.join(newPreviewParentDir, filePastedTemp.name);
+
+        
+        const parsedName = path.parse(fileToCopy.name);
+        const oldVideoPath = path.join(`${uploadPath}`, 'videos', `${user.id}`, oldPreviewPaths.previewPathWithoutFileName, parsedName.name);
+        const newVideoPath = path.join(`${uploadPath}`, 'videos', `${user.id}`, previewPathWithoutFileName, parsedName.name);
+
+        const masterRelativePath = path.join(`/hls-content/${user.id}`, previewPathWithoutFileName, parsedName.name, 'master.m3u8');
+
+
+        if (fs.existsSync(oldPreviewPath)) {
+
+          fs.mkdirSync(path.dirname(newPreviewPath), { recursive: true });
+          fs.renameSync(oldPreviewPath, newPreviewPath);
+
+          
+        }
+        
+        if (fs.existsSync(oldVideoPath)) {
+          
+          fs.mkdirSync(path.dirname(newVideoPath), { recursive: true });
+          fs.renameSync(oldVideoPath, newVideoPath);
+          
+        }
+        
+        if (filePastedTemp) {
+          
+          filePastedTemp["previewUrl"] = previewUrl;
+          filePastedTemp["relativePath"] = filePastedTemp.status ? masterRelativePath : relativePath;
+        }  
         
         
       } else {
         return res.status(500).json({message: "Either copy or cut allowed"});
       }
+      
+      
+      // console.log(previewUrl, relativePath, oldPreviewPaths.previewUrl, oldPreviewPaths.relativePath);
+      
+      const channel = `user-notifications:${user.id}`;
+      const payload = JSON.stringify({
+        event: 'file-transfer',
+        filePasted: filePastedTemp,
+        status: 'success'
+      });
+      
+      await redisPublisher.publish(channel, payload);
 
       
   } catch (error) {
@@ -707,6 +809,7 @@ const isAuth = (req, res) => {
 
 const getFilesByParent = async (req, res) => {
 
+
   const { parent, take, cursor: cursorStr } = req.query;
   const cursor = cursorStr ? JSON.parse(cursorStr) : null;
   const user = res.locals.currentUser;
@@ -718,14 +821,20 @@ const getFilesByParent = async (req, res) => {
 
   for (const file of result.files) {
     
-    if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/")) {
+    if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/") || file.mimeType.startsWith("audio/")) {
       const tempPath = await getFolderPath(file.id, 0);
 
       const previewUrl = path.join(`/previews/${user.id}`, tempPath);
-      const relativePath = path.join(`/fullPreviews/${user.id}`, tempPath);
+      const relativePath = path.join(`/fullPreviews/${user.id}/${file.id}`, tempPath);
 
+      const parentPath = await getFolderPath(file.parentId, 0);
+      const parsedName = path.parse(file.name);
+      
+      const masterRelativePath = path.join(`/hls-content/${user.id}`, path.join(parentPath, parsedName.name), 'master.m3u8');
+
+      
       file["previewUrl"] = previewUrl;
-      file["relativePath"] = relativePath;
+      file["relativePath"] = file.status ? masterRelativePath : relativePath;
       
     }
     
@@ -738,14 +847,44 @@ const getFilesByParent = async (req, res) => {
 const handleSearchConnection = async (req, res) => {
   try {    
 
+    let totalPreviewsPerSearch = 0;
+
     const parsedMessage = req.body;
+    
+    const user = req.user;
 
     const result = await getSearchResult(parsedMessage, req.user);
+    
+    for (const file of result.files) {
 
-    return res.status(200).json({ result: result });
+      if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/") || file.mimeType.startsWith("audio/")) {
+        
+        const tempPath = await getFolderPath(file.id, 0);
+        
+        const previewUrl = path.join(`/previews/${user.id}`, tempPath);
+        const relativePath = path.join(`/fullPreviews/${user.id}/${file.id}`, tempPath);
 
+        const parentPath = await getFolderPath(file.parentId, 0);
+        const parsedName = path.parse(file.name);
+        
+        const masterRelativePath = path.join(`/hls-content/${user.id}`, path.join(parentPath, parsedName.name), 'master.m3u8');
+
+        
+        file["previewUrl"] = previewUrl;
+        file["relativePath"] = file.status ? masterRelativePath : relativePath;
+        totalPreviewsPerSearch++;
+
+        
+      }
+
+
+    }
+    
+    
+    return res.status(200).json({ result: result, totalPreviews: totalPreviewsPerSearch });
+    
   } catch (error) {
-
+    
     return res.status(400).json({ message: "Bad query" });
   }
 };
@@ -772,26 +911,65 @@ const getImagePreview = (req, res) => {
   });
 };
 
-const getFullPreview = (req, res) => {
+const getFullPreview = async (req, res) => {
   const userId = req.params.userId;
-
-
-  const filePath = req.params[0];
-
+  const fileId = req.params.fileId;
   
-  if (!userId || !filePath) {
-      return res.status(400).send('Invalid path');
+  const filePath = req.params[0];
+  
+  
+  if (!userId || !filePath || !fileId) {
+    return res.status(400).send('Invalid path');
   }
   
+  if (!res.locals.currentUser || Number.parseInt(res.locals.currentUser.id) !== Number.parseInt(userId)) {
+    return res.status(401).send("Authorization required");
+  }
+  
+  
   const physicalPath = path.join(uploadPath, userId, filePath);
+  // const manifestPath = path.join(uploadPath, 'videos', userId, filePath);
+  
+  const file = await getFileById(Number.parseInt(fileId));
+  
+  const range = req.headers.range;
+  
+  if (file) {
+    
+    if (range) {
+
+      const size = fs.statSync(physicalPath).size;
+      const CHUNK_SIZE = 10 ** 6;
+      const start = Number(range.replace(/\D/g, ""));
+      const end = Math.min(start + CHUNK_SIZE, size - 1);
+      const contentLength = end - start + 1;
+      const headers = {
+          "Content-Range": `bytes ${start}-${end}/${size}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": contentLength,
+          "Content-Type": "video/mp4",
+      };
+
+      res.writeHead(206, headers);
+      const videoStream = fs.createReadStream(physicalPath, { start, end });
+      videoStream.pipe(res);
+
+    } else {
+
+      res.sendFile(physicalPath, (err) => {
+        if (err) {
+          console.error(`Error sending file: ${physicalPath}`, err);
+          res.status(404).send('Preview not found');
+        }
+      });
+
+    }  
+    
+  } else {
+    res.status(400).send("File not found");
+  }
 
   
-  res.sendFile(physicalPath, (err) => {
-    if (err) {
-      console.error(`Error sending file: ${physicalPath}`, err);
-      res.status(404).send('Preview not found');
-    }
-  });
 };
 
 const eventsUtil = (req, res) => {
