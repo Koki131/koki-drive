@@ -2732,7 +2732,7 @@ function DuplicateNameConfirm({ duplicateConfirm, setDuplicateConfirm, duplicate
       duplicateConfirm.type === "paste" && <ConfirmInputContainer>
         <input ref={checkboxRef} name="video-input" id='video-input' type="checkbox" />
         <label htmlFor="video-input">
-          Apply to all video files?
+          Apply to all files?
         </label> 
       </ConfirmInputContainer> 
       }

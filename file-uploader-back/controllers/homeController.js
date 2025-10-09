@@ -466,7 +466,14 @@ const rename = async (req, res) => {
 
 
 
-
+    if (replace && fs.existsSync(fullNewPath.path)) {
+        fs.rmSync(fullNewPath.path, { recursive: true }, (err) => {
+          if (err) {
+            console.error(`Error deleting file ${fullNewPath.path}:`, err);
+          }
+        });
+    }
+    
     fs.renameSync(fullOrgPath.path, fullNewPath.path);
 
     if (fs.existsSync(oldPreviewPath)) {
