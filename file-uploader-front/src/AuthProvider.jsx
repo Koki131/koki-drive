@@ -31,7 +31,6 @@ export function AuthProvider({ children }) {
     };
 
     const toggle = () => {
-        console.log("TEST");
         
         setDisplayMode((displayMode) => !displayMode);
     };

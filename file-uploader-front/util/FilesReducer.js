@@ -89,16 +89,18 @@ const filesReducer = (state, action) => {
         const newFolders = state.folders.clone();
         const newFiles = state.files.clone();
 
-        let {newFile, oldFile, name} = action.payload;
+        let {newFile, oldFile, name, conflictedFile} = action.payload;
         
         
         
         if (oldFile.type === "FOLDER") {
-            newFolders.delete(oldFile);
-            newFolders.add(newFile);
+          if (conflictedFile) newFolders.delete(conflictedFile);
+          newFolders.delete(oldFile);
+          newFolders.add(newFile);
         } else {
-            newFiles.delete(oldFile);
-            newFiles.add(newFile);
+          if (conflictedFile) newFiles.delete(conflictedFile);
+          newFiles.delete(oldFile);
+          newFiles.add(newFile);
         }
 
         return {folders: newFolders, files: newFiles};

@@ -356,6 +356,11 @@ function debounce(func, wait) {
 
 
     const handleLogout = async () => {
+
+        if (!confirm("Are you sure you want to logout?")) {
+            return;
+        }
+        
         await logout();
     };
 

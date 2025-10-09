@@ -1,5 +1,5 @@
 const Router = require("express");
-const { register, getPreviewableSize, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste, createNewFolder, getParentPath, handleSearchConnection, getImagePreview, eventsUtil, getFullPreview } = require("../controllers/homeController");
+const { register, getPreviewableSize, logout, uploadChunk, savePath, isAuth, getFilesByParent, checkFileStatus, download, rename, deleteFiles, paste, createNewFolder, getParentPath, handleSearchConnection, getImagePreview, eventsUtil, getFullPreview, checkFolderExists, generateNewName, checkFileExists, renameNameConflict } = require("../controllers/homeController");
 const passport = require("passport");
 const bodyParser = require("body-parser");
 
@@ -28,6 +28,10 @@ homeRouter.post("/delete", deleteFiles);
 homeRouter.post("/search", handleSearchConnection);
 homeRouter.post("/paste", paste);
 homeRouter.post("/checkFileStatus", checkFileStatus);
+homeRouter.get("/checkFileExists", checkFileExists);
+homeRouter.get("/checkIfFolderExists", checkFolderExists);
+homeRouter.get("/renameNameConflict", renameNameConflict);
+homeRouter.get("/generateNewName", generateNewName);
 homeRouter.post("/createNewFolder", createNewFolder);
 homeRouter.get("/events", eventsUtil)
 homeRouter.get("/getFilesByParent", getFilesByParent);

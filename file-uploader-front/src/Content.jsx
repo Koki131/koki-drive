@@ -273,6 +273,14 @@ const TextArea = styled.textarea`
   border: none;
   overflow: hidden;
   font-size: 11px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  word-wrap: break-word;
+  white-space: normal;
+  justify-content: center;
+  text-align: center;
+  padding: 5px;
   
   &:focus {
     outline: none;
@@ -388,6 +396,7 @@ export default function Content({
   const [sortOptions, setSortOptions] = useState({sortBy: "name", sortDir: "asc"});
   const [shouldRename, setShouldRename] = useState(-1);
   const [videoConfirm, setVideoConfirm] = useState({visible: false, fileName: ""});
+  const [duplicateConfirm, setDuplicateConfirm] = useState({visible: false, fileName: "", type: "upload"});
   const [isPositioned, setIsPositioned] = useState(false);
   
   const { displayMode, user, authLoading } = useAuth();
@@ -402,6 +411,7 @@ export default function Content({
   // const isLoadingMoreRef = useRef(false);
   // const previewableItemsRef = useRef(new LinkedList());
   const loadingVideoData = useRef({ isLoadingVideo: false, applyToAll: false, makeRenditions: false });
+  const duplicateNameData = useRef({ replace: false, newFile: false, blockExecution: true, applyToAll: false, cancel: false });
   const lastMousePositionRef = useRef({ x: 0, y: 0 });
   const itemRefs = useRef({});
   const selectionBoxRef = useRef();
@@ -548,59 +558,69 @@ export default function Content({
 
     console.log("GETTING FILES");
     
+    const controller = new AbortController();
+
     const getFiles = async () => {
         if (!calculatedInitialTake.current) {
             return;
         }
 
+        
         setIsLoading(true);
         isLoadingMoreRef.current = true;
-
+        
         hasMore.current = true; 
         nextCursor.current = null;
-
+        
         try {
-            const parent = folderId ? folderId : "";
+          const nullableParent = folderIdRef.current ? folderIdRef.current : null;
+          const parent = folderIdRef.current ? folderIdRef.current : "";
           
-            const request = await fetch(`${apiUrl}/getFilesByParent?parent=${parent}&take=${calculatedInitialTake.current}`, {
-                method: "GET",
-                headers: { "Content-Type": "application/json" },
-                credentials: 'include',
-            });
-            if (!request.ok) {
-                throw new Error(`HTTP error! status: ${request.status}`);
-            }
-            const response = await request.json();
-            const { files: initialFiles, nextCursor: initialNextCursor } = response.result;
-            
-            liveRenderedCount.current = initialFiles.length;
-            maxRenderedFiles.current = calculatedInitialTake.current; 
-            
-            uploadQueueRef.current = [];
-            
-            
-            const newFolders = new BST(calculatedInitialTake.current);
-            const newFiles = new BST(calculatedInitialTake.current);
-            
-            for (const file of initialFiles) {
-              if (file.type === 'FOLDER') {
-                newFolders.add(file);
-              } else {
-                newFiles.add(file);
-                if (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/") || file.mimeType.startsWith("audio/")) {
-
-                  previewableItemsRef.current.add(file.id, file.relativePath, file.mimeType, file.status);
-                  
-                }
+          const request = await fetch(`${apiUrl}/getFilesByParent?parent=${parent}&take=${calculatedInitialTake.current}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+            credentials: 'include',
+          });
+          if (!request.ok) {
+            throw new Error(`HTTP error! status: ${request.status}`);
+          }
+          const response = await request.json();
+          const { files: initialFiles, nextCursor: initialNextCursor } = response.result;
+          
+          liveRenderedCount.current = initialFiles.length;
+          maxRenderedFiles.current = calculatedInitialTake.current; 
+          
+          uploadQueueRef.current = [];
+          
+          
+          const newFolders = new BST(calculatedInitialTake.current);
+          const newFiles = new BST(calculatedInitialTake.current);
+          
+          for (const file of initialFiles) {
+            if (file.type === 'FOLDER') {
+              newFolders.add(file);
+            } else {
+              newFiles.add(file);
+              if (file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/") || file.mimeType.startsWith("audio/")) {
+                
+                previewableItemsRef.current.add(file.id, file.relativePath, file.mimeType, file.status);
+                
               }
             }
-            
-            nextCursor.current = initialNextCursor;
-            hasMore.current = !!nextCursor.current;
-            
-            dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
+          }
+          
+          nextCursor.current = initialNextCursor;
+          hasMore.current = !!nextCursor.current;
+          
 
-            
+          
+          if (folderIdRef.current !== nullableParent) return;
+
+          dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
+
+          return () => {
+            controller.abort();
+          };
 
         } catch (e) {
             console.error("Error fetching initial files:", e);
@@ -649,7 +669,8 @@ export default function Content({
 
         } else {
 
-          const parent = folderId ? folderId : "";
+          const nullableParent = folderIdRef.current ? folderIdRef.current : null;
+          const parent = folderIdRef.current ? folderIdRef.current : "";
   
           let url = `${apiUrl}/getFilesByParent?parent=${parent}&take=${take}`;
           if (nextCursor) {
@@ -665,6 +686,8 @@ export default function Content({
           if (!request.ok) {
               throw new Error(`HTTP error! status: ${request.status}`);
           }
+          
+          if (folderIdRef.current !== nullableParent) return;
 
           const response = await request.json();
           const { files: newFiles, nextCursor: newCursor } = response.result;
@@ -677,7 +700,8 @@ export default function Content({
           nextCursor.current = newCursor;
           if (!newCursor) {
               hasMore.current = false;
-          }            
+          }   
+                   
         }
 
         if (filesToAdd.length > 0) {
@@ -1151,9 +1175,21 @@ export default function Content({
 
         const response = await fetchWithTimeout(url, options, currentTimeout, jobId);
         
-                  
+          
         if (!response.ok) {
-          throw new Error(`Server responded with status ${response.status}`);
+          let errorData = null;
+
+          try {
+            errorData = await response.json();
+          } catch (e) {
+
+          }
+
+          const error = new Error(`Server responded with status ${response.status}`);
+
+          error.data = errorData;
+
+          throw error;
         }
 
         
@@ -1162,6 +1198,10 @@ export default function Content({
       } catch (error) {
           console.error(`Fetch failed: ${error.message}`);
           
+          if (error.data) {
+            throw error;
+          }
+
           if (waitForResume) {
             res = await waitForResume();
           }
@@ -1212,7 +1252,7 @@ export default function Content({
   };
 
   
-  const getParentName =   (tempName) => {
+  const getParentName = (tempName) => {
     let parentName = "";
 
     for (let i = 0; i < tempName.length && i < 10; i++) {
@@ -1222,11 +1262,60 @@ export default function Content({
     return parentName;
   };
   const uploadPaths = async (files, pathToId, parentPath) => {
+    
+    let rootName = null;
+    let changeName = false;
 
+    if (files.length > 0) {
+
+      rootName = files[0].webkitRelativePath.split("/")[0];
+
+      
+      
+      const req = await retryFetch(`${apiUrl}/checkIfFolderExists?folderName=${rootName}&parentId=${folderIdRef.current}`, {
+        credentials: "include"
+      }, 10000, 500);
+      
+      if (!req.ok) {
+        return;
+      }
+      
+      const res = await req.json();
+      
+      const folderName = res.folderName;
+      const folderId = res.folderId;
+      const parentId = res.parentId;
+
+      
+      if (folderName && folderId) {
+        // open context window and await for new instructions
+        setDuplicateConfirm({visible: true, fileName: folderName, type: "upload"});
+        
+        await conditionalPromiseDuplicate(duplicateNameData);
+
+        if (duplicateNameData.current.newFile) {
+
+          const generateNewName = await retryFetch(`${apiUrl}/generateNewName?folderName=${rootName}&folderId=${folderId}&parentId=${parentId}`, {
+            credentials: "include"
+          }, 10000, 500);
+
+          const res = await generateNewName.json();
+
+          rootName = res.changedName;
+          duplicateNameData.current = { replace: false, newFile: false, blockExecution: true, applyToAll: false, cancel: false };
+
+          changeName = true;
+
+        }
+
+      }
+
+    }
+    
     for (let file of files) {
-
-        const {relativePath, fileName} = getRelativePath(file, parentPath);
-
+      
+        const {relativePath, fileName} = getRelativePath(file, parentPath, rootName, changeName);
+        
         if (!pathToId[relativePath]) {
 
             const relativePathArr = relativePath.split("/");
@@ -1237,22 +1326,29 @@ export default function Content({
               
               if (folderName === '') continue;
 
+              try {
 
-              const req = await retryFetch(`${apiUrl}/savePath`, {
-                  method: "POST",
-                  headers: {
-                      "Content-Type": "application/json",
-                  },
-                  credentials: "include",
-                  body: JSON.stringify({ folder: folderName, parentIdToSend: parentId, currentFolderId: folderIdRef.current }),
-              }, 10000, 500);
-              
-              const res = await req.json();
-              
-              const { newParentId } = res.folderData;
-              
+                const req = await retryFetch(`${apiUrl}/savePath`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    credentials: "include",
+                    body: JSON.stringify({ folder: folderName, parentIdToSend: parentId, currentFolderId: folderIdRef.current }),
+                }, 10000, 500);
 
-              parentId = newParentId;
+                const res = await req.json();
+                
+                const { newParentId } = res.folderData;
+  
+                parentId = newParentId;
+
+                } catch (error) {
+
+                    console.error("An unrecoverable network error occurred:", error.message);
+
+                }
+
               
             }
 
@@ -1260,15 +1356,24 @@ export default function Content({
 
         }
     }
+
+    return {rootName: rootName, changeName: changeName};
   };
   
-  const getRelativePath = (file, parentPath) => {
+  const getRelativePath = (file, parentPath, newName, changeName) => {
       const pathArr = file.webkitRelativePath.split("/");
       const len = pathArr.length;
       
       let path = [];
       path.push(parentPath);
-      for (let i = 0; i < len-1; i++) {
+
+      let s = 0;
+      if (changeName) {
+        path.push(newName);
+        s = 1;
+      }
+
+      for (let i = s; i < len-1; i++) {
         const p = pathArr[i];
         path.push(p);
         path.push("/");
@@ -1311,7 +1416,18 @@ export default function Content({
       checkCondition();
     });
   };
-
+  const conditionalPromiseDuplicate = (duplicateData, pollInterval = 100) => {
+    return new Promise(resolve => {
+      const checkCondition = () => {
+        if (!duplicateData.current.blockExecution) {
+          resolve();
+        } else {
+          setTimeout(checkCondition, pollInterval);
+        }
+      };
+      checkCondition();
+    });
+  };
   const uploadFolder = async (e) => {
 
       e.preventDefault();
@@ -1350,7 +1466,7 @@ export default function Content({
 
       const parentPath = tempParentPath.parentPath ? tempParentPath.parentPath : "";
       
-      await uploadPaths(form[0].files, pathToId, parentPath);
+      const { rootName, changeName } = await uploadPaths(form[0].files, pathToId, parentPath);
 
       for (let file of fileList) {
         
@@ -1385,18 +1501,8 @@ export default function Content({
         }
         
         
-        const fileData = getRelativePath(file, parentPath);
+        const fileData = getRelativePath(file, parentPath, rootName, changeName);
 
-        // const req = await fetch(`${apiUrl}/checkFileStatus`, {
-        //   method: "POST",
-        //   credentials: "include",
-        //   headers: {
-        //     "Content-Type" : "application/json"
-        //   },
-        //   body: JSON.stringify({parentId: pathToId[relativePath], fileName: file.name})
-        // });  
-
-        // const fileStatus = await req.json();
         
         const metaData = {parentId: pathToId[fileData.relativePath], fileName: fileData.fileName};
         const videoConfirmData = { yesToAll: yesToAll, noToAll: noToAll, makeRenditionsCurrentVideo: makeRenditionsCurrentVideo };
@@ -1446,7 +1552,6 @@ export default function Content({
         mimeType: file.type
       };
 
-      console.log(videoConfirmData);
       
       formData.append("meta_data", JSON.stringify(chunkData));
       formData.append("video_confirm_data", JSON.stringify(videoConfirmData));     
@@ -1530,42 +1635,81 @@ export default function Content({
       const newName = itemRefs.current[fileId].getState();
 
       if (newName) {
-        
-        if (newName.trim().localeCompare(oldName.trim()) === 0) {
+        const trimmedNewName = newName.trim();
+
+        if (trimmedNewName.localeCompare(oldName.trim()) === 0) {
           setShouldRename(-1);
           return;
         }
+        let conflictedFile = null;
 
-        const req = await fetch(`${apiUrl}/rename`, {
-            method: "PUT",
-            headers: {"Content-Type":"application/json"},
-            credentials: "include",
-            body: JSON.stringify({
-              fileId: shouldRename,
-              name: newName.trim()
-            })
-          });
-  
-          const res = await req.json();
+        try {
 
-          if (!req.ok) {
-            alert(res.message);
-            setShouldRename(-1);
-            return;
+          const renameConflictCheck = await retryFetch(`${apiUrl}/renameNameConflict?newName=${trimmedNewName}&fileId=${shouldRename}`, {
+            credentials: "include"
+          }, 10000, 500);
+
+
+
+        } catch (e) {
+            
+          if (e.data) {
+            setDuplicateConfirm({visible: true, fileName: trimmedNewName, type: "rename"});
+            
+            conflictedFile = e.data.conflictedFile;
+
+            await conditionalPromiseDuplicate(duplicateNameData);
+          }       
+
+        } finally {
+
+          try {
+
+            if (duplicateNameData.current.cancel) {
+                setShouldRename(-1);
+                return;
+            }
+
+            const req = await retryFetch(`${apiUrl}/rename`, {
+              method: "PUT",
+              headers: {"Content-Type":"application/json"},
+              credentials: "include",
+              body: JSON.stringify({
+                fileId: shouldRename,
+                name: trimmedNewName,
+                replace: duplicateNameData.current.replace,
+                addNew: duplicateNameData.current.newFile,
+                conflictedFile: conflictedFile
+              })
+            }, 10000, 500);
+    
+            const res = await req.json();
+            
+            const fileToRename = res.oldFile;
+            const renamedFile = res.renamedFile;
+            const replaced = res.replaced;
+    
+            console.log(renamedFile);
+            
+            if (previewableItemsRef.current.idToNode[fileToRename.id]) {
+              previewableItemsRef.current.idToNode[fileToRename.id].value = renamedFile.relativePath;
+            }
+              // itemRefs.current[]updateState: (newState) => setNewName(newState)
+            if (itemRefs && itemRefs.current[renamedFile.id]) itemRefs.current[renamedFile.id].updateState(renamedFile.name);
+            
+            dispatch({type: 'rename-file', payload: {newFile: renamedFile, oldFile: fileToRename, name: trimmedNewName, conflictedFile: replaced ? conflictedFile : null}});
+            
+          } catch (e) {
+            if (e.data) {
+              alert(e.data.message);
+            }
+          } finally {            
+            duplicateNameData.current = { replace: false, newFile: false, blockExecution: true, applyToAll: false, cancel: false };
           }
-          
-          const fileToRename = res.oldFile;
-          const renamedFile = res.renamedFile;
-  
-          if (previewableItemsRef.current.idToNode[fileToRename.id]) {
-            previewableItemsRef.current.idToNode[fileToRename.id].value = renamedFile.relativePath;
-          }
-  
-          setShouldRename(-1);
-          dispatch({type: 'rename-file', payload: {newFile: renamedFile, oldFile: fileToRename, name: newName}});
-      } else {
-        setShouldRename(-1);
-      }
+        }
+      } 
+
+      setShouldRename(-1);
 
   };
   
@@ -1599,6 +1743,14 @@ export default function Content({
 
   const handleDelete = async () => {
 
+    setFileContextWindow({ visible: false, x: 0, y: 0, moveLeft: false, moveUp: false });
+
+    if (!confirm(`Are you sure you want to delete these files?`)) return;
+
+    const jobId = Date.now();
+
+    progressCompRef.current.addJob({jobId: jobId, action: "delete", data: {}});
+    
     let filesToDelete = [];
     
     if (selectedFiles) {
@@ -1608,6 +1760,7 @@ export default function Content({
       }
     }
     
+
     const req = await fetch(`${apiUrl}/delete`, {
       method: "POST",
       headers: { "Content-Type" : "application/json" },
@@ -1618,6 +1771,7 @@ export default function Content({
     if (!req.ok) {
       const res = await req.json();
       alert(res.errors);
+      progressCompRef.current.removeJob(jobId);
       return;
     }
     const folderValues = files.folders.fileValues;
@@ -1643,9 +1797,8 @@ export default function Content({
     newFolders.fileValues = fileValues;
     newFiles.fileValues = fileValues;
     
+    progressCompRef.current.removeJob(jobId);
     dispatch({type: 'init-load', payload: {folders: newFolders, files: newFiles}});
-
-    setFileContextWindow({ visible: false, x: 0, y: 0, moveLeft: false, moveUp: false });
     
   };
 
@@ -1705,32 +1858,72 @@ export default function Content({
     setFileContextWindow({ visible: false, x: 0, y: 0, moveLeft: false, moveUp: false });
     const filesSelected = type && type === "copy" ? filesCopied : filesCut;
 
+    let globalAdd = false;
 
     for (const fileId of filesSelected) {
+      try {
 
-      const req = await fetch(`${apiUrl}/paste`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        credentials: "include",
-        body: JSON.stringify({file: fileId, path: pathId, operationType: type})
-      });
+        let currAdd = false;
 
-      const res = await req.json();
+        const fileExists = await retryFetch(`${apiUrl}/checkFileExists?fileId=${fileId}&pathId=${pathId}`, {
+          credentials: 'include'
+        }, 10000, 500);
 
-      if (!req.ok) { 
-        alert(res.message);
+        const fileExistsRes = await fileExists.json();
+
+        const { fileName, parentId } = fileExistsRes;
+
+        if (fileName) {
+          
+          if (!duplicateNameData.current.applyToAll) {
+
+            setDuplicateConfirm({visible: true, fileName: fileName, type: "paste"});
+    
+            await conditionalPromiseDuplicate(duplicateNameData);
+
+
+            if (duplicateNameData.current.applyToAll) {
+              if (duplicateNameData.current.newFile) {
+                globalAdd = true;
+              } 
+            } else {
+              if (duplicateNameData.current.newFile) {
+                currAdd = true;
+              }
+            }
+          }
+
+        }
+        if (duplicateNameData.current.cancel) {
+          break;
+        }
+
+        const req = await retryFetch(`${apiUrl}/paste`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          credentials: "include",
+          body: JSON.stringify({file: fileId, path: pathId, operationType: type, fileName: (globalAdd || currAdd) ? fileName : null})
+        }, 10000, 500);
+        
+
+      } catch (e) {
+
+        if (e.data) {
+          alert(e.data.message);
+        }
         progressCompRef.current.removeJob(jobId);
         setFilesCopied([]);
         setFilesCut([]);
         return;
+
       }
-      
       
     }
     
-    setFilesCopied([]);
+    // setFilesCopied([]);
     setFilesCut([]);
     progressCompRef.current.removeJob(jobId);
+    duplicateNameData.current = { replace: false, newFile: false, blockExecution: true, applyToAll: false, cancel: false };
     
   };
 
@@ -1774,7 +1967,13 @@ export default function Content({
       totalSearchPreviewCount={totalSearchPreviewCount}
       lazyLoadState={lazyLoadState}
       ></PreviewComp>
-      {videoConfirm.visible && <VideoConfirm videoConfirm={videoConfirm} setVideoConfirm={setVideoConfirm} loadingVideoData={loadingVideoData}>
+      {
+      duplicateConfirm.visible && 
+      <DuplicateNameConfirm duplicateConfirm={duplicateConfirm} setDuplicateConfirm={setDuplicateConfirm} duplicateNameData={duplicateNameData} displayMode={displayMode}>
+
+      </DuplicateNameConfirm>
+      }
+      {videoConfirm.visible && <VideoConfirm videoConfirm={videoConfirm} setVideoConfirm={setVideoConfirm} loadingVideoData={loadingVideoData} displayMode={displayMode}>
 
       </VideoConfirm>}
       {newFolder && <NewFolderWindow displayMode={displayMode}>
@@ -1801,11 +2000,11 @@ export default function Content({
             // console.log(index);
             const isSelected = !!(selectedFiles && selectedFiles[file.id]);
             const isBeingRenamed = shouldRename === file.id;
-
+            const cacheBuster = Date.now();
             
-            let fileImagePreview = `${apiUrl}${file.previewUrl}`;
+            let fileImagePreview = `${apiUrl}${file.previewUrl}?v=${cacheBuster}`
             
-
+            
             return (
               <FileItem
                 key={file.id}
@@ -1940,7 +2139,7 @@ function FileItem({
     e.preventDefault();
     handleRenameSubmit();
   };
-
+  
   return (
     <FileContainer
       data-file-id={file.id}
@@ -2092,6 +2291,24 @@ function ProgressComp({ ref, displayMode, menuUp, menuDown}) {
         Object.keys(jobs).map((jobId) => {
           
           const job = jobs[jobId];
+
+          if (job.action === "delete") {
+            return (
+              !minimize && <Progress displayMode={displayMode} key={jobId}>
+              <ProgressHeader>
+                <ContentSize>Deleting files</ContentSize>
+                <RightContainer>
+                  <Loader displayMode={displayMode}></Loader>
+                </RightContainer>
+              </ProgressHeader>
+              <ProgressBar>
+                <StyledBar displayMode={displayMode}>
+                  <div className='styled-bar-fill-bounce'></div>
+                </StyledBar>
+              </ProgressBar>
+            </Progress>
+            );
+          }
 
           if (job.action === "cut" || job.action === "copy") {
             return (
@@ -2459,7 +2676,8 @@ function  ContextWindow({
   );
 };
 
-const VideoConfirmWindow = styled.div`
+
+const ConfirmWindow = styled.div`
   display: grid;
   grid-template-rows: repeat(1fr, auto);
   position: absolute;
@@ -2470,30 +2688,64 @@ const VideoConfirmWindow = styled.div`
   width: 20vw;
   height: 15vh;
   background-color: ${props => !props.displayMode ? "#f5f5f5" : "#252424"};
+  color: ${props => !props.displayMode ? "#252424" : "#f5f5f5"};
   border-radius: 34px;
   padding: 1vw;
   z-index: 1;
-`;
+`
 
-const VideoConfirmButtonContainer = styled.div`
+const ConfirmButtonContainer = styled.div`
   display: flex;
   justify-content: end;
   gap: 0.5vw;
-`;
+`
 
-const StyledVideoConfirmButton = styled.p`
+const ConfirmButton = styled.p`
   color: #9028f9;
   &:hover {
     cursor: pointer;
   }
-`;
-const VideoConfirmInputContainer = styled.div`
+`
+const ConfirmInputContainer = styled.div`
   display: flex;
   align-items: center;
   gap: 0.3vw;
 `;
 
-function VideoConfirm({ videoConfirm, setVideoConfirm, loadingVideoData }) {
+function DuplicateNameConfirm({ duplicateConfirm, setDuplicateConfirm, duplicateNameData, displayMode }) {
+    const checkboxRef = useRef(null);
+
+    const handleButtons = (e, options) => {
+      e.preventDefault();
+      
+      setDuplicateConfirm({visible: false, fileName: "", type: "upload"});
+      duplicateNameData.current = {...options, applyToAll: duplicateConfirm.type === "paste" ? checkboxRef.current.checked : false};
+
+    };
+
+    return (
+    <ConfirmWindow displayMode={displayMode}>
+      <p>
+        Name already exists <span><i><b>{duplicateConfirm.fileName}</b></i></span>
+      </p>
+      { 
+      duplicateConfirm.type === "paste" && <ConfirmInputContainer>
+        <input ref={checkboxRef} name="video-input" id='video-input' type="checkbox" />
+        <label htmlFor="video-input">
+          Apply to all video files?
+        </label> 
+      </ConfirmInputContainer> 
+      }
+      <ConfirmButtonContainer>
+        <ConfirmButton onClick={(e) => handleButtons(e, { replace: true, newFile: false, blockExecution: false, applyToAll: false, cancel: false })}>Replace</ConfirmButton>
+        <ConfirmButton onClick={(e) => handleButtons(e, { replace: false, newFile: true, blockExecution: false, applyToAll: false, cancel: false })}>Rename</ConfirmButton>
+        <ConfirmButton onClick={(e) => handleButtons(e, { replace: false, newFile: true, blockExecution: false, applyToAll: false, cancel: true })}>Cancel</ConfirmButton>
+      </ConfirmButtonContainer>
+    </ConfirmWindow>
+  );
+}
+
+function VideoConfirm({ videoConfirm, setVideoConfirm, loadingVideoData, displayMode }) {
   const checkboxRef = useRef(null);
 
   const handleButtons = (e, flag) => {
@@ -2504,21 +2756,21 @@ function VideoConfirm({ videoConfirm, setVideoConfirm, loadingVideoData }) {
   };
 
   return (
-    <VideoConfirmWindow>
+    <ConfirmWindow displayMode={displayMode}>
       <p>
         It looks like you're about to transfer a video file. Do you wish to make multiple renditions of the quality? <span><i>({videoConfirm.fileName})</i></span>
       </p>
-      <VideoConfirmInputContainer>
+      <ConfirmInputContainer>
         <input ref={checkboxRef} name="video-input" id='video-input' type="checkbox" />
         <label htmlFor="video-input">
           Apply to all video files?
         </label>
-      </VideoConfirmInputContainer>
-      <VideoConfirmButtonContainer>
-        <StyledVideoConfirmButton onClick={(e) => handleButtons(e, true)}>Yes</StyledVideoConfirmButton>
-        <StyledVideoConfirmButton onClick={(e) => handleButtons(e, false)}>No</StyledVideoConfirmButton>
-      </VideoConfirmButtonContainer>
-    </VideoConfirmWindow>
+      </ConfirmInputContainer>
+      <ConfirmButtonContainer>
+        <ConfirmButton onClick={(e) => handleButtons(e, true)}>Yes</ConfirmButton>
+        <ConfirmButton onClick={(e) => handleButtons(e, false)}>No</ConfirmButton>
+      </ConfirmButtonContainer>
+    </ConfirmWindow>
   );
 
 }

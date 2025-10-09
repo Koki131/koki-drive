@@ -60,7 +60,7 @@ const StyledInputWrapper = styled.div`
     width: 70%;
     margin: 0.5vw;
     box-sizing: border-box;
-    font-size: min(0.7vw, 1.4vh);
+    font-size: min(0.7vw, 1.4vh); 
     z-index: 0;
     padding: 0.5vw 0 0.5vw 2vw;
 
@@ -68,7 +68,7 @@ const StyledInputWrapper = styled.div`
     ${props => !props.displayMode && `
         background-color: #ffffff;
         color: black;
-        border-color: #ccc;
+        border-color: ${props.hasErrors ? 'red' : 'black'};
         &::placeholder {
             color: #888;
         }
@@ -77,7 +77,7 @@ const StyledInputWrapper = styled.div`
     ${props => props.displayMode && `
         background-color: #3a3a3a;
         color: white;
-        border-color: #555;
+        border-color: ${props.hasErrors ? 'red' : '#555'};
         &::placeholder {
             color: #bbb;
         }
@@ -100,7 +100,7 @@ const StyledInput = styled.input`
     font-size: min(0.7vw, 1.4vh);
     z-index: 0;
 `
-const InputDiv = styled.div`
+const StyledForm = styled.form`
     display: flex;
     align-items: center;
     justify-content: center;
@@ -136,6 +136,11 @@ const StyledLink = styled(Link)`
 const StyledHeader = styled.h3`
     font-size: min(1vw, 2vh);
 `
+const Errors = styled.ul`
+    padding: 0.5vw;
+    color: red;
+`
+const apiUrl = import.meta.env.VITE_API_URL;
 export default function Register() {
 
     const [username, setUsername] = useState("");
@@ -163,8 +168,11 @@ export default function Register() {
     };
 
     const handleRegister = async (e) => {
-
-        const request = await fetch("http://localhost:3000/register", {
+        console.log("TEST");
+        
+        e.preventDefault();
+        
+        const request = await fetch(`${apiUrl}/register`, {
             method: "POST",
             headers: { "Content-Type" : "application/json" },
             credentials: "include",
@@ -182,34 +190,35 @@ export default function Register() {
 
     return (
         <>  
-            <ul>
-            {
-                errors.map((e) => {
-                    return <li>{e["msg"]}</li>
-                })
-            }
-            </ul>
+
             <LoginContainer displayMode={displayMode}>
                 <LoginRegisterToggle></LoginRegisterToggle>
                 <LoginBoxContainer displayMode={displayMode}>
                     <StyledLogo src={logo}></StyledLogo>
                     <LoginInnerBox>
-                        <InputDiv>
+                        <StyledForm onSubmit={(e) => handleRegister(e)}>
                             <StyledHeader>Sign up</StyledHeader>
-                            <StyledInputWrapper>
+                            <StyledInputWrapper hasErrors={errors.length > 0}>
                                 <StyledInputImg src={usernameImg}></StyledInputImg>
                                 <StyledInput displayMode={displayMode} type="text" name="username" onChange={(e) => handleUsername(e)} value={username} placeholder="Username"/>
                             </StyledInputWrapper>
-                            <StyledInputWrapper>
+                            <StyledInputWrapper hasErrors={errors.length > 0}>
                                 <StyledInputImg src={passwordImg}></StyledInputImg>
                                 <StyledInput displayMode={displayMode} type="password" name="password" onChange={(e) => handlePassword(e)} value={password} placeholder="Password"/>
                             </StyledInputWrapper>
-                            <StyledInputWrapper>
+                            <StyledInputWrapper hasErrors={errors.length > 0}>
                                 <StyledInputImg src={passwordImg}></StyledInputImg>
                                 <StyledInput displayMode={displayMode} type="password" name="matchingPassword" onChange={(e) => handleMatchingPassword(e)} value={matchingPassword} placeholder="Matching Password"/>
                             </StyledInputWrapper>
-                            <StyledButton displayMode={displayMode} onClick={(e) => handleRegister(e)}>Register</StyledButton>
-                        </InputDiv>
+                                <Errors>
+                                {
+                                    errors.map((e) => {
+                                        return <li>{e["msg"]}</li>
+                                    })
+                                }
+                                </Errors>
+                            <StyledButton type="submit" displayMode={displayMode}>Register</StyledButton>
+                        </StyledForm>
                         <StyledP>Already have an account? <StyledLink to={"/login"}>Sign in</StyledLink> </StyledP>
                     </LoginInnerBox>
                 </LoginBoxContainer>

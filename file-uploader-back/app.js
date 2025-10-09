@@ -66,9 +66,16 @@ passport.use(
       try {
         const rows  = await findUserByUsername(username);
         const user = rows[0];
-        if (!user) return done(null, false, { message: "Incorrect username" });
+
+        if (!user) {
+         return done(null, false, { message: "Incorrect username or password" }); 
+        }
         const passwordsMatch = await bcrypt.compare(password, user.password);
-        if (!passwordsMatch) return done(null, false, { message: "Incorrect password" });
+
+        if (!passwordsMatch) {
+         return done(null, false, { message: "Incorrect username or password" }); 
+        }
+
         return done(null, user);
       } catch(err) { return done(err); }
     })

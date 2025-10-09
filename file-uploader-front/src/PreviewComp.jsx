@@ -237,6 +237,7 @@ export default function PreviewComp({
 
     const previewSize = await checkPreviewableItemsSize(folderId);
 
+    console.log(previewSize);
     
     
     
@@ -254,11 +255,11 @@ export default function PreviewComp({
         }
     }
     if (sortOptions.sortDir === 'asc') {
-        console.log(nextNode, previewableItems.tail, previewableItems.len, previewSize);
+
         if (nextNode && nextNode.id === previewableItems.tail.id) {
             if (lazyLoadState.current === "list" && previewableItems.len < previewSize) {
                 await lazyLoadFiles(true);
-            } else {
+            } else if (lazyLoadState.current === "search" && previewableItems.len < previewSize) {
                 await continueSearch(totalSearchPreviewCount.current > 0);
             }
 

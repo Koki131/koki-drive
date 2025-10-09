@@ -147,6 +147,7 @@ const saveFolder = async (parentId, folderName, user) => {
 
 };
 
+
 const saveFolderStructure = async (folderName, parentId, user, destFolderId) => {
     
     let newFolder = await prisma.file.findFirst({
@@ -168,13 +169,15 @@ const saveFolderStructure = async (folderName, parentId, user, destFolderId) => 
             }
         });
 
-        // add conditional for search value
         if (parentId === destFolderId) {
-            return {newParentId: newFolder.id, folder: newFolder};
+            return {newParentId: newFolder.id, folder: newFolder, folderExists: false};
         }
+
+    } else {
+        return {newParentId: newFolder.id, folder: null, folderExists: true};
     }
     
-    return {newParentId: newFolder.id, folder: null};
+    return {newParentId: newFolder.id, folder: null, folderExists: false};
 
     
 };
@@ -213,6 +216,19 @@ const folderExists = async (folderName, parentId, userId) => {
     });
 
     return folder;
+};
+
+const duplicateExists = async (fileName, parentId, userId) => {
+
+    const file = await prisma.file.findFirst({
+        where: {
+            name: fileName,
+            userId: userId,
+            parentId: parentId,
+        }
+    });
+
+    return file;
 };
 
 const fileExists = async (fileName, parentId, userId) => {
@@ -433,20 +449,24 @@ const getFolderPath = async (id, idx) => {
     
 };
 
-const saveCopyToDb = async (file, parentId, user, previewPaths) => {
+const saveCopyToDb = async (file, parentId, user, finalName) => {
 
     const fileId = Number.parseInt(file.id);
 
-    if (file.type === "FOLDER") {
-        if (await folderExists(file.name, parentId, user.id)) {
-            throw new Error("Folder already exists");
-        }
-    } else {
-        if (await fileExists(file.name, parentId, user.id)) {
-            throw new Error("File already exists");
-        }
-    }
+    const fileName = finalName || file.name;
 
+    const exists = await prisma.file.findFirst({
+        where: {
+            name: fileName,
+            userId: user.id,
+            parentId: parentId
+        }
+    });
+
+    if (exists) {
+        return exists;
+    }
+    
     let originalChildren = [];
     if (file.type === "FOLDER") {
         originalChildren = await prisma.file.findMany({
@@ -469,7 +489,7 @@ const saveCopyToDb = async (file, parentId, user, previewPaths) => {
 
         copiedFile = await prisma.file.create({
             data: {
-                name: file.name,
+                name: fileName,
                 type: file.type,
                 user: { connect: { id: user.id } },
                 ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
@@ -482,7 +502,7 @@ const saveCopyToDb = async (file, parentId, user, previewPaths) => {
     } else {
         copiedFile = await prisma.file.create({
             data: {
-                name: file.name,
+                name: fileName,
                 type: file.type,
                 user: { connect: { id: user.id } },
                 ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
@@ -505,13 +525,25 @@ const saveCopyToDb = async (file, parentId, user, previewPaths) => {
 
 };
 
-const saveCutToDb = async (fileToCopy, destinationFolderId, previewPaths) => {
+const saveCutToDb = async (fileToCopy, destinationFolderId, user) => {
 
     let file = null;
 
     if (!fileToCopy) return;
+    const exists = await prisma.file.findFirst({
+        where: {
+            name: fileToCopy.name,
+            userId: user.id,
+            parentId: destinationFolderId
+        }
+    });
+
+    if (exists) {
+        return exists;
+    }
 
     if (fileToCopy.mimeType.startsWith('image/') || fileToCopy.mimeType.startsWith('video/')) {
+
         
         if (fileToCopy.parentId) {
             await decrementPreviewCount(Number.parseInt(fileToCopy.parentId));
@@ -529,6 +561,7 @@ const saveCutToDb = async (fileToCopy, destinationFolderId, previewPaths) => {
                 id: fileToCopy.id
             },
             data: {
+                name: fileToCopy.name,
                 parentId: destinationFolderId,
                 status: fileToCopy.status
             }
@@ -539,6 +572,7 @@ const saveCutToDb = async (fileToCopy, destinationFolderId, previewPaths) => {
                 id: fileToCopy.id
             },
             data: {
+                name: fileToCopy.name,
                 parentId: destinationFolderId,
             }
         });        
@@ -705,16 +739,16 @@ const renameFile = async (fileId, newName, orgPath) => {
     });
 
 
-    const res = await prisma.file.findFirst({
-        where: {
-            parentId: file.parentId,
-            name: newName
-        }
-    });
+    // const res = await prisma.file.findFirst({
+    //     where: {
+    //         parentId: file.parentId,
+    //         name: newName
+    //     }
+    // });
     
-    if (res) {
-        return null;
-    }
+    // if (res) {
+    //     return null;
+    // }
 
     // const { previewUrl, relativePath, previewPathWithoutFileName } = await getPreviewPaths(file.parentId, newName, file.userId);
     
@@ -768,6 +802,8 @@ const deleteFile = async (fileId) => {
 
 
 module.exports = {
+    folderExists,
+    fileExists,
     findUserById,
     findUserByUsername,
     registerUser,
@@ -791,5 +827,6 @@ module.exports = {
     getFolderPath,
     getSize,
     getRootSize,
-    updateStatus
+    updateStatus,
+    duplicateExists
 }

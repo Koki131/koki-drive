@@ -68,7 +68,7 @@ const StyledInputWrapper = styled.div`
     ${props => !props.displayMode && `
         background-color: #ffffff;
         color: black;
-        border-color: #ccc;
+        border-color: ${props.hasErrors ? 'red' : '#ccc'};
         &::placeholder {
             color: #888;
         }
@@ -77,7 +77,7 @@ const StyledInputWrapper = styled.div`
     ${props => props.displayMode && `
         background-color: #3a3a3a;
         color: white;
-        border-color: #555;
+        border-color: ${props.hasErrors ? 'red' : '#555'};
         &::placeholder {
             color: #bbb;
         }
@@ -100,7 +100,7 @@ const StyledInput = styled.input`
     font-size: min(0.7vw, 1.4vh);
     z-index: 0;
 `
-const InputDiv = styled.div`
+const StyledForm = styled.form`
     display: flex;
     align-items: center;
     justify-content: center;
@@ -136,10 +136,17 @@ const StyledLink = styled(Link)`
 const StyledHeader = styled.h3`
     font-size: min(1vw, 2vh);
 `
+const Error = styled.p`
+    color: red;
+    padding: 0.5vw;    
+`
+
+const apiUrl = import.meta.env.VITE_API_URL;
 export default function Login() {
 
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [errors, setErrors] = useState("");
     const { login, displayMode } = useAuth();
     const navigate = useNavigate();
 
@@ -152,7 +159,15 @@ export default function Login() {
     };
 
     const handleLogin = async (e) => {
-        const request = await fetch("http://localhost:3000/login", {
+        
+        e.preventDefault();
+
+        if (username.trim() === "" || password.trim() === "") {
+            setErrors("Username or password cannot be empty");
+            return;
+        }
+
+        const request = await fetch(`${apiUrl}/login`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -160,6 +175,13 @@ export default function Login() {
             credentials: "include",
             body: JSON.stringify({username, password}),
         });
+
+
+        if (!request.ok && request.status === 401) {
+            setErrors("Incorrect username or password");
+            return;
+        }
+        
 
         const response = await request.json();
 
@@ -179,18 +201,19 @@ export default function Login() {
                 <LoginBoxContainer displayMode={displayMode}>
                     <StyledLogo src={logo}></StyledLogo>
                     <LoginInnerBox>
-                        <InputDiv>
+                        <StyledForm onSubmit={(e) => handleLogin(e)}>
                             <StyledHeader>Sign in</StyledHeader>
-                            <StyledInputWrapper>
+                            <StyledInputWrapper hasErrors={errors.length > 0}>
                                 <StyledInputImg src={usernameImg}></StyledInputImg>
                                 <StyledInput displayMode={displayMode} type="text" name="username" onChange={(e) => handleUsername(e)} value={username} placeholder="Username"/>
                             </StyledInputWrapper>
-                            <StyledInputWrapper>
+                            <StyledInputWrapper hasErrors={errors.length > 0}>
                                 <StyledInputImg src={passwordImg}></StyledInputImg>
                                 <StyledInput displayMode={displayMode} type="password" name="password" onChange={(e) => handlePassword(e)} value={password} placeholder="Password"/>
                             </StyledInputWrapper>
-                            <StyledButton displayMode={displayMode} onClick={(e) => handleLogin(e)}>Login</StyledButton>
-                        </InputDiv>
+                            {errors.length > 0 && <Error>{errors}</Error>}
+                            <StyledButton type="submit" displayMode={displayMode}>Login</StyledButton>
+                        </StyledForm>
                         <StyledP>Don't have an account? <StyledLink to={"/register"}>Sign up</StyledLink> </StyledP>
                     </LoginInnerBox>
                 </LoginBoxContainer>

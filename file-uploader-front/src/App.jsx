@@ -76,8 +76,6 @@ function App() {
       // if (!hasMore.current || isLoadingMoreRef.current || isLoading || lazyLoadState.current === "list") {
       //     return;
       // }
-
-      console.log("test");
       
       const container = fileContainerRef.current;
       const { scrollTop, scrollHeight, clientHeight } = container;
