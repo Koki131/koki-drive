@@ -410,7 +410,7 @@ export default function Content({
   // const hasMore = useRef(true); // change to ref
   // const isLoadingMoreRef = useRef(false);
   // const previewableItemsRef = useRef(new LinkedList());
-  const loadingVideoData = useRef({ isLoadingVideo: false, applyToAll: false, makeRenditions: false });
+  const loadingVideoData = useRef({ isLoadingVideo: false, applyToAll: false, makeRenditions: false, singleFile: false });
   const duplicateNameData = useRef({ replace: false, newFile: false, blockExecution: true, applyToAll: false, cancel: false });
   const lastMousePositionRef = useRef({ x: 0, y: 0 });
   const itemRefs = useRef({});
@@ -1084,9 +1084,62 @@ export default function Content({
     setNewFolder(true);    
   };
     
-  const uploadFile = (e) => {
+  const uploadFile = async (e) => {
+    e.preventDefault();
 
-      console.log(e.target)
+    const form = e.target;
+
+    let file = form[0].files[0];
+
+    let currSize = [0];
+
+    if (file) {
+
+      const jobId = Date.now();
+      
+      progressCompRef.current.addJob({jobId: jobId, action: "upload", name: file.name, data: {percentage: 0}, pause: false, cancel: false});
+
+      let makeRenditionsCurrentVideo = false;
+
+      await conditionalPromise(isLoadingMoreRef);
+
+      if (file.type.startsWith("video/")) {
+
+        loadingVideoData.current = { isLoadingVideo: true, applyToAll: false, makeRenditions: false, singleFile: true };
+        setVideoConfirm({visible: true, fileName: file.name});
+        
+        await conditionalPromiseVideo(loadingVideoData);
+
+        const { isLoadingVideo, applyToAll, makeRenditions } = loadingVideoData.current;
+
+        if (makeRenditions) {
+
+          makeRenditionsCurrentVideo = true;
+        
+        }
+        
+
+      }
+      
+      const metaData = { parentId: folderIdRef.current, fileName: file.name };
+      const videoConfirmData = { yesToAll: false, noToAll: false, makeRenditionsCurrentVideo: makeRenditionsCurrentVideo };
+      
+      await uploadInChunks(file, "", jobId, currSize, file.size, metaData, videoConfirmData);
+    
+
+      
+
+      progressCompRef.current.updateJob({
+          jobId: jobId,
+          data: {percentage: Math.round(currSize[0] * 100 / file.size)}
+      });
+      
+      file = null;
+
+      progressCompRef.current.removeJob(jobId);
+
+    }
+    
   };
 
   let rollingSpeed = 1;
@@ -1254,7 +1307,7 @@ export default function Content({
   
   const getParentName = (tempName) => {
     let parentName = "";
-
+  
     for (let i = 0; i < tempName.length && i < 10; i++) {
         parentName += tempName.charAt(i);
     }
@@ -1449,7 +1502,7 @@ export default function Content({
       const tempName = form[0].files[0].webkitRelativePath.split("/")[0];
 
       const parentName = getParentName(tempName);
-
+      
       const totalSize = getUploadSize(form[0].files);
       
       progressCompRef.current.addJob({jobId: jobId, action: "upload", name: parentName, data: {percentage: 0}, pause: false, cancel: false});
@@ -1476,7 +1529,7 @@ export default function Content({
 
         if (!yesToAll && !noToAll && file.type.startsWith("video/")) {
 
-          loadingVideoData.current = { isLoadingVideo: true, applyToAll: false, makeRenditions: false };
+          loadingVideoData.current = { isLoadingVideo: true, applyToAll: false, makeRenditions: false, singleFile: false };
           setVideoConfirm({visible: true, fileName: file.name});
           
           await conditionalPromiseVideo(loadingVideoData);
@@ -1504,7 +1557,7 @@ export default function Content({
         const fileData = getRelativePath(file, parentPath, rootName, changeName);
 
         
-        const metaData = {parentId: pathToId[fileData.relativePath], fileName: fileData.fileName};
+        const metaData = { parentId: pathToId[fileData.relativePath], fileName: fileData.fileName };
         const videoConfirmData = { yesToAll: yesToAll, noToAll: noToAll, makeRenditionsCurrentVideo: makeRenditionsCurrentVideo };
         
         await uploadInChunks(file, fileData.relativePath, jobId, currSize, totalSize, metaData, videoConfirmData);
@@ -2752,7 +2805,7 @@ function VideoConfirm({ videoConfirm, setVideoConfirm, loadingVideoData, display
     e.preventDefault();
     
     setVideoConfirm({visible: false, fileName: ""});
-    loadingVideoData.current = { isLoadingVideo: false, applyToAll: checkboxRef.current.checked, makeRenditions: flag };
+    loadingVideoData.current = { isLoadingVideo: false, applyToAll: (checkboxRef && checkboxRef.current) ? checkboxRef.current.checked : false, makeRenditions: flag, singleFile: false };
   };
 
   return (
@@ -2760,12 +2813,12 @@ function VideoConfirm({ videoConfirm, setVideoConfirm, loadingVideoData, display
       <p>
         It looks like you're about to transfer a video file. Do you wish to make multiple renditions of the quality? <span><i>({videoConfirm.fileName})</i></span>
       </p>
-      <ConfirmInputContainer>
+      {!loadingVideoData.current.singleFile && <ConfirmInputContainer>
         <input ref={checkboxRef} name="video-input" id='video-input' type="checkbox" />
         <label htmlFor="video-input">
           Apply to all video files?
         </label>
-      </ConfirmInputContainer>
+      </ConfirmInputContainer>}
       <ConfirmButtonContainer>
         <ConfirmButton onClick={(e) => handleButtons(e, true)}>Yes</ConfirmButton>
         <ConfirmButton onClick={(e) => handleButtons(e, false)}>No</ConfirmButton>

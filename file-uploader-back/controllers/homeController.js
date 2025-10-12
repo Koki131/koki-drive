@@ -134,14 +134,16 @@ const uploadChunk = async (req, res) => {
 
   bb.on('file', (fieldname, file, info) => {
 
-    const { relativePath, fileName, chunkMetaData, chunkData, lastChunk, mimeType } = JSON.parse(metaData);
+    let { relativePath, fileName, chunkMetaData, chunkData, lastChunk, mimeType } = JSON.parse(metaData);
     const parsedVideoConfirmData = JSON.parse(videoConfirmData);
 
 
-    const finalPath = `${uploadPath}${res.locals.currentUser.id}/${relativePath}`;
-    const basePreviewPath = `/previews/${res.locals.currentUser.id}/${relativePath}`;
-    const previewPath = `${uploadPath}previews/${res.locals.currentUser.id}/${relativePath}`;
 
+    let finalPath = `${uploadPath}${res.locals.currentUser.id}/${relativePath}`;
+    let basePreviewPath = `/previews/${res.locals.currentUser.id}/${relativePath}`;
+    let previewPath = `${uploadPath}previews/${res.locals.currentUser.id}/${relativePath}`;
+
+    
 
     fs.mkdirSync(finalPath, { recursive: true });
 
@@ -473,7 +475,7 @@ const rename = async (req, res) => {
           }
         });
     }
-    
+
     fs.renameSync(fullOrgPath.path, fullNewPath.path);
 
     if (fs.existsSync(oldPreviewPath)) {
