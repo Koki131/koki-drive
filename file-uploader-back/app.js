@@ -23,17 +23,19 @@ const hlsStoragePath = path.join(uploadPath, 'videos');
 
 
 const server = http.createServer(app);
+app.set('trust proxy', 1); 
 
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: "https://fine-endlessly-lark.ngrok-free.app",
   credentials: true
 }));
+
 
 const sessionMiddleware = session({
   cookie: {
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    sameSite: "lax",
-    secure: false,
+    sameSite: "none",
+    secure: true,
     httpOnly: true
   },
   secret: 'a santa at nasa',
@@ -84,10 +86,16 @@ passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
     try {
       const rows = await findUserById(id);
+      if (!rows || rows.length === 0) {
+        return done(null, false);
+      }
       const user = rows[0];
       done(null, user);
-    } catch(err) { done(err); }
+    } catch(err) { 
+      done(err); 
+    }
 });
+
 
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

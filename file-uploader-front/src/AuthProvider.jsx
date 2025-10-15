@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 const AuthContext = createContext(null);
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
@@ -10,7 +11,7 @@ export function AuthProvider({ children }) {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const req = await fetch("http://localhost:3000/isUserAuthenticated", {
+                const req = await fetch(`${apiUrl}/isUserAuthenticated`, {
                    credentials: "include" 
                 });
                 const res = await req.json();
@@ -37,7 +38,7 @@ export function AuthProvider({ children }) {
 
     const logout = async () => {
         try {
-            await fetch("http://localhost:3000/logout", {
+            await fetch(`${apiUrl}/logout`, {
                 method: "POST",
                 headers: {"Content-Type":"application/json"},
                 credentials: "include"

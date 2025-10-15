@@ -80,7 +80,7 @@ const savePath = async (req, res) => {
       folder: folderData.folder,
       status: 'success'
     });
-
+    // console.log(`FOLDER: Publishing on channel ${channel}, payload: ${payload}`);
     await redisPublisher.publish(channel, payload);
   }
 
@@ -253,7 +253,8 @@ const writeChunk = (
               file: file,
               status: 'success'
             });
-
+            // console.log(`Publishing on channel ${channel}, payload: ${payload}`);
+            
             await redisPublisher.publish(channel, payload);
 
             if (mimeType.startsWith('image/') || mimeType.startsWith('video/')) {
@@ -366,7 +367,7 @@ const rename = async (req, res) => {
   const replace = req.body.replace;
   const conflictedFile = req.body.conflictedFile;
 
-  console.log(conflictedFile);
+  // console.log(conflictedFile);
   
 
   const userUploadPath = path.join(uploadPath, String(user.id));
@@ -967,8 +968,7 @@ const getFilesByParent = async (req, res) => {
   const { parent, take, cursor: cursorStr } = req.query;
   const cursor = cursorStr ? JSON.parse(cursorStr) : null;
   const user = res.locals.currentUser;
-
-
+  
   const result = await queryFilesByParent(req.user.id, parent, cursor, take);
 
   // construct preview paths for all files

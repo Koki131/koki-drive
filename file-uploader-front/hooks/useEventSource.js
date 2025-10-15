@@ -21,6 +21,7 @@ const useSseListener = (url, onMessage) => {
 
     eventSource.onmessage = (event) => {
       const parsedData = JSON.parse(event.data);
+      
       // Directly call the latest version of the callback function
       if (onMessageRef.current) {
         onMessageRef.current(parsedData);

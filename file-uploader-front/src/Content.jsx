@@ -445,7 +445,7 @@ export default function Content({
   };
 
   const handleSseMessage = (message) => {
-
+    
       if (message) {
         switch (message.event) {
           case "file-transfer": {
@@ -505,9 +505,6 @@ export default function Content({
 
   
   useEffect(() => {
-    // Get a reference to the container for use in the cleanup function
-
-    console.log("ADDING EVENTS EFFECT");
     
     const currentFileContainer = fileContainerRef.current;
 
@@ -556,7 +553,6 @@ export default function Content({
 
   useEffect(() => {
 
-    console.log("GETTING FILES");
     
     const controller = new AbortController();
 
