@@ -13,17 +13,12 @@ A full-stack file storage and media-processing app. Users upload files/folders i
 - **Real-time client updates** — upload completion, video-processing completion, and thumbnail-generation completion are pushed to the client over Server-Sent Events (`/api/events`) rather than polled
 
 ## Previews
-
-Drop screenshots into a `docs/screenshots/` folder in the repo and reference them here — replace the placeholder paths/captions below with your own.
-
 | | |
 |---|---|
 | ![Login](docs/screenshots/login.png) | ![File browser](docs/screenshots/file-browser.png) |
 | Login | File browser |
 | ![Upload progress](docs/screenshots/upload-progress.png) | ![Video player](docs/screenshots/video-player.png) |
 | Upload in progress | Video playback |
-
-> GitHub/GitLab render relative image paths automatically as long as the images are committed alongside the README. PNG or JPG both work fine; keep individual files under a couple MB so the README stays quick to load.
 
 ## Tech Stack
 
