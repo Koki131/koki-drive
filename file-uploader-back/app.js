@@ -68,7 +68,7 @@ passport.use(
       try {
         const rows  = await findUserByUsername(username);
         const user = rows[0];
-
+        
         if (!user) {
          return done(null, false, { message: "Incorrect username or password" }); 
         }

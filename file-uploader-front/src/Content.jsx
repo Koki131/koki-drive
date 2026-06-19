@@ -1310,7 +1310,7 @@ export default function Content({
 
     return parentName;
   };
-  const uploadPaths = async (files, pathToId, parentPath) => {
+  const uploadPaths = async (files, pathToId, parentPath, jobId) => {
     
     let rootName = null;
     let changeName = false;
@@ -1360,51 +1360,60 @@ export default function Content({
       }
 
     }
+    try {
     
-    for (let file of files) {
-      
-        const {relativePath, fileName} = getRelativePath(file, parentPath, rootName, changeName);
+      for (let file of files) {
         
-        if (!pathToId[relativePath]) {
-
-            const relativePathArr = relativePath.split("/");
-            
-            let parentId = null;
-
-            for (const folderName of relativePathArr) {
-              
-              if (folderName === '') continue;
-
-              try {
-
-                const req = await retryFetch(`${apiUrl}/savePath`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    credentials: "include",
-                    body: JSON.stringify({ folder: folderName, parentIdToSend: parentId, currentFolderId: folderIdRef.current }),
-                }, 10000, 500);
-
-                const res = await req.json();
-                
-                const { newParentId } = res.folderData;
+          const {relativePath, fileName} = getRelativePath(file, parentPath, rootName, changeName);
+          
+          if (!pathToId[relativePath]) {
   
-                parentId = newParentId;
-
-                } catch (error) {
-
-                    console.error("An unrecoverable network error occurred:", error.message);
-
-                }
-
+              const relativePathArr = relativePath.split("/");
               
-            }
-
-            pathToId[relativePath] = parentId;
-
-        }
-    }
+              let parentId = null;
+  
+              for (const folderName of relativePathArr) {
+                
+                if (folderName === '') continue;
+  
+                try {
+  
+                  const req = await retryFetch(`${apiUrl}/savePath`, {
+                      method: "POST",
+                      headers: {
+                          "Content-Type": "application/json",
+                      },
+                      credentials: "include",
+                      body: JSON.stringify({ folder: folderName, parentIdToSend: parentId, currentFolderId: folderIdRef.current }),
+                  }, 10000, 500, jobId, () => waitForResume(jobId));
+  
+                  const res = await req.json();
+                  
+                  const { newParentId } = res.folderData;
+    
+                  parentId = newParentId;
+  
+                  } catch (error) {
+  
+                      console.error("An unrecoverable network error occurred:", error.message);
+                      throw new Error("An unrecoverable network error occurred. Upload cancelled.");
+  
+                  }
+  
+                
+              }
+  
+  
+              pathToId[relativePath] = parentId;
+  
+          }
+  
+      }
+    } catch (error) {
+      console.error("An unrecoverable network error occurred:", error.message);
+      progressCompRef.current.removeJob(jobId);
+      throw new Error("An unrecoverable network error occurred. Upload cancelled.");
+    } 
 
     return {rootName: rootName, changeName: changeName};
   };
@@ -1515,61 +1524,67 @@ export default function Content({
 
       const parentPath = tempParentPath.parentPath ? tempParentPath.parentPath : "";
       
-      const { rootName, changeName } = await uploadPaths(form[0].files, pathToId, parentPath);
+      try {
 
-      for (let file of fileList) {
-        
-        let makeRenditionsCurrentVideo = false;
-
-        await conditionalPromise(isLoadingMoreRef);
-
-        if (!yesToAll && !noToAll && file.type.startsWith("video/")) {
-
-          loadingVideoData.current = { isLoadingVideo: true, applyToAll: false, makeRenditions: false, singleFile: false };
-          setVideoConfirm({visible: true, fileName: file.name});
+        const { rootName, changeName } = await uploadPaths(form[0].files, pathToId, parentPath, jobId);
+  
+        for (let file of fileList) {
           
-          await conditionalPromiseVideo(loadingVideoData);
-
-          const { isLoadingVideo, applyToAll, makeRenditions } = loadingVideoData.current;
-
-          if (applyToAll) {
-
-            if (makeRenditions) {
-              yesToAll = true;
-            } else {
-              noToAll = true;
+          let makeRenditionsCurrentVideo = false;
+  
+          await conditionalPromise(isLoadingMoreRef);
+  
+          if (!yesToAll && !noToAll && file.type.startsWith("video/")) {
+  
+            loadingVideoData.current = { isLoadingVideo: true, applyToAll: false, makeRenditions: false, singleFile: false };
+            setVideoConfirm({visible: true, fileName: file.name});
+            
+            await conditionalPromiseVideo(loadingVideoData);
+  
+            const { isLoadingVideo, applyToAll, makeRenditions } = loadingVideoData.current;
+  
+            if (applyToAll) {
+  
+              if (makeRenditions) {
+                yesToAll = true;
+              } else {
+                noToAll = true;
+              }
+  
+            } else if (makeRenditions) {
+  
+              makeRenditionsCurrentVideo = true;
+            
             }
-
-          } else if (makeRenditions) {
-
-            makeRenditionsCurrentVideo = true;
-          
+            
+  
           }
           
-
+          
+          const fileData = getRelativePath(file, parentPath, rootName, changeName);
+  
+          
+          const metaData = { parentId: pathToId[fileData.relativePath], fileName: fileData.fileName };
+          const videoConfirmData = { yesToAll: yesToAll, noToAll: noToAll, makeRenditionsCurrentVideo: makeRenditionsCurrentVideo };
+          
+          await uploadInChunks(file, fileData.relativePath, jobId, currSize, totalSize, metaData, videoConfirmData);
+        
+  
+          
+  
+          progressCompRef.current.updateJob({
+              jobId: jobId,
+              data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
+          });
+          
+          file = null;
         }
-        
-        
-        const fileData = getRelativePath(file, parentPath, rootName, changeName);
-
-        
-        const metaData = { parentId: pathToId[fileData.relativePath], fileName: fileData.fileName };
-        const videoConfirmData = { yesToAll: yesToAll, noToAll: noToAll, makeRenditionsCurrentVideo: makeRenditionsCurrentVideo };
-        
-        await uploadInChunks(file, fileData.relativePath, jobId, currSize, totalSize, metaData, videoConfirmData);
-      
-
-        
-
-        progressCompRef.current.updateJob({
-            jobId: jobId,
-            data: {percentage: Math.round(currSize[0] * 100 / totalSize)}
-        });
-        
-        file = null;
+      } catch (error) {
+        console.error("An unrecoverable network error occurred during folder upload:", error.message);
+      } finally { 
+        progressCompRef.current.removeJob(jobId);
       }
 
-      progressCompRef.current.removeJob(jobId);
   };
 
   const uploadInChunks = async (file, relativePath, jobId, currSize, totalSize, metaData, videoConfirmData) => {
