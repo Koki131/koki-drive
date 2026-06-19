@@ -1,4 +1,4 @@
-# File Uploader
+# Koki Drive
 
 A full-stack file storage and media-processing app. Users upload files/folders into a nested filesystem-like structure, with video transcoding, thumbnail generation, and live progress updates all happening asynchronously in the background.
 
