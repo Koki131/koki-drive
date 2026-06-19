@@ -28,8 +28,6 @@ A full-stack file storage and media-processing app. Users upload files/folders i
 
 **Infrastructure** — PostgreSQL (primary datastore), Redis (BullMQ job queues + pub/sub for real-time events), Nginx (serves the frontend build and reverse-proxies the API)
 
-> A few listed backend dependencies (`flash`, `cors`, the backend copy of `video.js`) don't have an obvious server-side role given this spec. Before deploying, it's worth confirming which are actually imported — e.g. `grep -rn "require('cors')" backend/` — and pruning the rest from `package.json`.
-
 ## Architecture
 
 Uploads are streamed to the backend, written to disk under `UPLOAD_PATH`, and tracked in Postgres. Once a transfer finishes, a completion event is published on Redis; image/video files are then queued for further processing by their dedicated worker, which publishes its own completion event when done. The backend forwards these events to the browser over a long-lived Server-Sent Events connection (`/api/events`), so the client stays in sync without polling.
@@ -309,19 +307,18 @@ Postgres, Redis, and Nginx are already running as services from the install step
 
 ```bash
 # Terminal 1 — backend API
-cd backend
-npm start
+cd file-uploader-back
+node --watch app.js
 
 # Terminal 2 — video transcoding worker
-cd backend
-node workers/videoWorker.js     # adjust path to match your actual worker script
+cd file-uploader-back
+node videoWorker.js
 
 # Terminal 3 — thumbnail worker
-cd backend
-node workers/thumbnailWorker.js # adjust path to match your actual worker script
+cd file-uploader-back
+node thumbnailWorker.js
 ```
 
-> The worker file paths above are placeholders — swap in whatever your video/thumbnail worker scripts are actually named once you fill in the rest of the project structure.
 
 With Nginx already serving the built frontend and proxying `/api`, visiting `server_name` (or the machine's IP — see below) in a browser is enough; there's no separate frontend dev server to run in this setup.
 
