@@ -159,8 +159,8 @@ sudo systemctl enable --now nginx
 ### 7. Clone the repository
 
 ```bash
-git clone <your-repo-url> file-uploader
-cd file-uploader
+git clone https://github.com/Koki131/koki-drive.git
+cd koki-drive
 ```
 
 ### 8. Backend setup
@@ -200,7 +200,7 @@ npx prisma migrate dev --name init
 ### 9. Frontend setup
 
 ```bash
-cd ../frontend   # adjust to your actual frontend folder name
+cd ../file-uploader-front
 npm install
 ```
 
