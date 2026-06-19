@@ -15,9 +15,9 @@ A full-stack file storage and media-processing app. Users upload files/folders i
 ## Previews
 | | |
 |---|---|
-| ![Login](docs/screenshots/login.png) | ![File browser](docs/screenshots/file-browser.png) |
+| ![Login](git_images/login.png) | ![File browser](git_images/file_browser.png) |
 | Login | File browser |
-| ![Upload progress](docs/screenshots/upload-progress.png) | ![Video player](docs/screenshots/video-player.png) |
+| ![Upload progress](git_images/upload_in_progress.png) | ![Video player](git_images/video_playback.png) |
 | Upload in progress | Video playback |
 
 ## Tech Stack
