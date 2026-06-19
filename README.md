@@ -166,7 +166,7 @@ cd koki-drive
 ### 8. Backend setup
 
 ```bash
-cd backend   # adjust to your actual backend folder name
+cd file-uploader-back
 npm install
 ```
 
