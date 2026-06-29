@@ -129,10 +129,12 @@ const queryFilesByParent = async (userId, parent, cursor, take) => {
 
 const saveFolder = async (parentId, folderName, user) => {
 
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
+
     if (folderName.trim() === "") {
         throw new Error("Folder name cannot be empty");
     }
-    if (await folderExists(folderName, parentId, user.id)) {
+    if (await folderExists(folderName, parentIdParsed, user.id)) {
         throw new Error("Folder with that name already exists");
     }
 
@@ -140,7 +142,7 @@ const saveFolder = async (parentId, folderName, user) => {
         data: {
             userId: user.id,
             name: folderName,
-            parentId: parentId,
+            parentId: parentIdParsed,
             type: "FOLDER"
         }
     });
@@ -149,12 +151,12 @@ const saveFolder = async (parentId, folderName, user) => {
 
 
 const saveFolderStructure = async (folderName, parentId, user, destFolderId) => {
-    
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     let newFolder = await prisma.file.findFirst({
         where: {
             userId: user.id,
             name: folderName,
-            parentId: parentId,
+            parentId: parentIdParsed,
             type: "FOLDER",
         }
     });
@@ -164,7 +166,7 @@ const saveFolderStructure = async (folderName, parentId, user, destFolderId) => 
             data: {
                 user: {connect: {id: user.id}},
                 name: folderName,
-                parent: parentId ? {connect: {id: parentId}} : {},
+                parent: parentIdParsed ? {connect: {id: parentIdParsed}} : {},
                 type: "FOLDER",
             }
         });
@@ -185,7 +187,7 @@ const saveFolderStructure = async (folderName, parentId, user, destFolderId) => 
 
 const saveRegularFileToDb = async (obj, user) => {
 
-    const parentId = obj.parentId;
+    const parentId = obj.parentId ? Number.parseInt(obj.parentId) : null;
     const fileName = obj.fileName;
     const file = await fileExists(fileName, parentId, user.id);
     
@@ -205,12 +207,13 @@ const saveRegularFileToDb = async (obj, user) => {
 };
 
 const folderExists = async (folderName, parentId, userId) => {
-
+    const folderNameTrimmed = folderName.trim();
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     const folder = await prisma.file.findFirst({
         where: {
-            name: folderName,
+            name: folderNameTrimmed,
             userId: userId,
-            parentId: parentId,
+            parentId: parentIdParsed,
             type: "FOLDER"
         }
     });
@@ -219,12 +222,13 @@ const folderExists = async (folderName, parentId, userId) => {
 };
 
 const duplicateExists = async (fileName, parentId, userId) => {
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
 
     const file = await prisma.file.findFirst({
         where: {
             name: fileName,
             userId: userId,
-            parentId: parentId,
+            parentId: parentIdParsed,
         }
     });
 
@@ -232,12 +236,13 @@ const duplicateExists = async (fileName, parentId, userId) => {
 };
 
 const fileExists = async (fileName, parentId, userId) => {
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
 
     const file = await prisma.file.findFirst({
         where: {
             name: fileName,
             userId: userId,
-            parentId: parentId,
+            parentId: parentIdParsed,
             type: "FILE"
         }
     });
@@ -247,8 +252,8 @@ const fileExists = async (fileName, parentId, userId) => {
 };
 
 const fileStatus = async (parentId, user, fileName) => {
-
-    const file = await fileExists(fileName, parentId, user.id);
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
+    const file = await fileExists(fileName, parentIdParsed, user.id);
     
     if (!file) return null;
 
@@ -256,10 +261,10 @@ const fileStatus = async (parentId, user, fileName) => {
 
 };
 const incrementPreviewCount = async (parentId) => {
-
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     const file = await prisma.file.update({
         where: {
-            id: parentId
+            id: parentIdParsed
         },
         data: {
             previewCount: {
@@ -270,9 +275,10 @@ const incrementPreviewCount = async (parentId) => {
     
 };
 const decrementPreviewCount = async (parentId) => {
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     await prisma.file.update({
         where: {
-            id: parentId
+            id: parentIdParsed
         },
         data: {
             previewCount: {
@@ -346,7 +352,7 @@ const updateStatus = async (fileId) => {
 
 const saveOrUpdateChunkedFileToDb = async (obj, chunkData, user, mimeType) => {
 
-    const parentId = obj.parentId;
+    const parentId = obj.parentId ? Number.parseInt(obj.parentId) : null;
     const fileName = obj.fileName;
     
     
@@ -450,7 +456,7 @@ const getFolderPath = async (id, idx) => {
 };
 
 const saveCopyToDb = async (file, parentId, user, finalName) => {
-
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     const fileId = Number.parseInt(file.id);
 
     const fileName = finalName || file.name;
@@ -459,7 +465,7 @@ const saveCopyToDb = async (file, parentId, user, finalName) => {
         where: {
             name: fileName,
             userId: user.id,
-            parentId: parentId
+            parentId: parentIdParsed
         }
     });
 
@@ -481,8 +487,8 @@ const saveCopyToDb = async (file, parentId, user, finalName) => {
     
     if (file.mimeType.startsWith("video/") || file.mimeType.startsWith("image/")) {
 
-        if (parentId) {
-            await incrementPreviewCount(Number.parseInt(parentId));
+        if (parentIdParsed) {
+            await incrementPreviewCount(parentIdParsed);
         } else {
             await incrementPreviewCountRoot(user.id);
         }
@@ -492,7 +498,7 @@ const saveCopyToDb = async (file, parentId, user, finalName) => {
                 name: fileName,
                 type: file.type,
                 user: { connect: { id: user.id } },
-                ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+                ...(parentIdParsed ? { parent: { connect: { id: parentIdParsed } } } : {}),
                 chunkStart: file.chunkStart,
                 chunkEnd: file.chunkEnd,
                 mimeType: file.mimeType,
@@ -505,7 +511,7 @@ const saveCopyToDb = async (file, parentId, user, finalName) => {
                 name: fileName,
                 type: file.type,
                 user: { connect: { id: user.id } },
-                ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+                ...(parentIdParsed ? { parent: { connect: { id: parentIdParsed } } } : {}),
                 chunkStart: file.chunkStart,
                 chunkEnd: file.chunkEnd,
                 mimeType: file.mimeType
@@ -609,10 +615,10 @@ const getRootSize = async (userId) => {
 };
 
 const getSize = async (parentId) => {
-
+    const parentIdParsed = parentId ? Number.parseInt(parentId) : null;
     const size = await prisma.file.findFirst({
         where: {
-            id: parentId
+            id: parentIdParsed
         },
         select: {
             previewCount: true

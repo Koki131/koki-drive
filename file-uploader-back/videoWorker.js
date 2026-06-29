@@ -34,10 +34,10 @@ const processor = async (job) => {
     }
 
     const allRenditions = [
-        { name: '360p',  height: 360,  videoBitrate: 800,  audioBitrate: '96k'  },
-        { name: '480p',  height: 480,  videoBitrate: 1400, audioBitrate: '128k' },
-        { name: '720p',  height: 720,  videoBitrate: 2800, audioBitrate: '128k' },
-        { name: '1080p', height: 1080, videoBitrate: 5000, audioBitrate: '192k' },
+        { name: '360p',  height: 360,  videoBitrate: 400,  audioBitrate: '96k',  crf: 32 },
+        { name: '480p',  height: 480,  videoBitrate: 700, audioBitrate: '128k', crf: 30 },
+        { name: '720p',  height: 720,  videoBitrate: 1400, audioBitrate: '128k', crf: 28 },
+        { name: '1080p', height: 1080, videoBitrate: 2500, audioBitrate: '192k', crf: 26 },
     ];
 
     const activeRenditions = allRenditions.filter(r => sourceHeight >= r.height);
@@ -55,19 +55,9 @@ const processor = async (job) => {
     const mapArgs = activeRenditions.map((_, i) => `-map "[outv${i+1}]" -map 0:a:0`).join(' ');
 
 
-    let maxBitrate = activeRenditions[activeRenditions.length-1].videoBitrate;
-
-    const codecArgs = activeRenditions.map((r, i) => {
-
-        const newBitrate = Math.round(maxBitrate * 0.6);
-
-        const arg = `-c:v:${i} libx264 -preset fast -b:v:${i} ${maxBitrate}k -c:a:${i} aac -b:a:${i} ${r.audioBitrate} -ac:a:${i} 2`;
-        
-        maxBitrate = newBitrate; 
-
-        return arg;
-
-    }).join(' ');
+    const codecArgs = activeRenditions.map((r, i) =>
+        `-c:v:${i} libx264 -preset fast -crf:v:${i} ${r.crf} -maxrate:v:${i} ${r.videoBitrate}k -bufsize:v:${i} ${r.videoBitrate * 2}k -c:a:${i} aac -b:a:${i} ${r.audioBitrate} -ac:a:${i} 2`
+    ).join(' ');
 
     const varStreamMap = activeRenditions.map((r, i) => `v:${i},a:${i},name:${r.name}`).join(' ');
 

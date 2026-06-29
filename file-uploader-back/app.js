@@ -21,21 +21,23 @@ const app = express();
 const uploadPath = process.env.UPLOAD_PATH;
 const hlsStoragePath = path.join(uploadPath, 'videos');
 
+const isProduction = process.env.NODE_ENV === 'production';
 
 const server = http.createServer(app);
 app.set('trust proxy', 1); 
 
 app.use(cors({
-  origin: "https://fine-endlessly-lark.ngrok-free.app",
-  credentials: true
+  origin: isProduction
+    ? "https://fine-endlessly-lark.ngrok-free.app"
+    : "http://localhost:5173",
+  credentials: true,
 }));
-
 
 const sessionMiddleware = session({
   cookie: {
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    sameSite: "none",
-    secure: true,
+    sameSite: isProduction ? "none" : "lax",
+    secure:   isProduction ? true  : false,  
     httpOnly: true
   },
   secret: 'a santa at nasa',

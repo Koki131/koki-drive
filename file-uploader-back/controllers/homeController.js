@@ -39,7 +39,7 @@ const generateNewName = async (req, res) => {
   
   let newName = `${folderName} (${inc})`;
   
-  while (await folderExists(newName, parentId === 'null' ? null : parentId, user.id)) {
+  while (await folderExists(newName, parentId === 'null' ? null : Number.parseInt(parentId), user.id)) {
     inc++;
     newName = `${folderName} (${inc})`;
   }
@@ -52,7 +52,7 @@ const generateNewName = async (req, res) => {
 const checkFolderExists = async (req, res) => {
 
     const folderName = req.query.folderName;
-    const parentId = req.query.parentId === 'null' ? null : req.query.parentId;
+    const parentId = req.query.parentId === 'null' ? null : Number.parseInt(req.query.parentId);
     const user = res.locals.currentUser;
 
     const exists = await folderExists(folderName, parentId, user.id);

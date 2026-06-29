@@ -27,7 +27,7 @@ const processor = async (job) => {
         if (mimeType.startsWith('image/')) {
           await sharp(filePath)
             .resize(50, 50, { fit: 'cover' })
-            .jpeg({ quality: 80 })
+            .jpeg({ quality: 65 })
             .toFile(finalPreviewPath);
         } else if (mimeType.startsWith('video/')) {
             

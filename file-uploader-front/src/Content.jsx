@@ -2066,7 +2066,7 @@ export default function Content({
             const isBeingRenamed = shouldRename === file.id;
             const cacheBuster = Date.now();
             
-            let fileImagePreview = `${apiUrl}${file.previewUrl}?v=${cacheBuster}`
+            let fileImagePreview = `${apiUrl}${file.previewUrl}`
             
             
             return (
