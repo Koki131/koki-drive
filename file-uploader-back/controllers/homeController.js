@@ -20,7 +20,7 @@ const path = require('path');
 const fs = require("fs");
 const busboy = require("busboy");
 const archiver = require('archiver');
-const { previewQueue, videoQueue } = require('../queues/queue');
+const { previewQueue, imageCompressQueue, videoQueue } = require('../queues/queue');
 const IORedis = require('ioredis');
 require('dotenv').config()
 
@@ -279,6 +279,16 @@ const writeChunk = (
                   userId: user.id
                 });
               }
+
+              if (mimeType.startsWith('image/') && mimeType !== 'image/gif') {
+                  await imageCompressQueue.add('compress', {
+                      user: user,
+                      fileId: file.id,
+                      inputPath: finalFilePath,
+                      mimeType: mimeType
+                  });
+              } 
+
 
               await previewQueue.add('generate', {
                 user: user,

@@ -8,9 +8,9 @@ const connection = new IORedis({
 });
 
 const previewQueue = new Queue('preview-generation', { connection });
-
+const imageCompressQueue = new Queue('image-compress', { connection });
 const videoQueue = new Queue('video-generation', { connection });
 
 
 
-module.exports = { previewQueue, videoQueue };
+module.exports = { previewQueue, imageCompressQueue, videoQueue };
